@@ -122,7 +122,7 @@ export default function SignUpPage() {
                                         <div className={`h-full flex-1 transition-colors ${password.length >= 8 ? 'bg-score-human' : 'bg-silver'}`} />
                                         <div className={`h-full flex-1 transition-colors ${/(?=.*[A-Z])/.test(password) && /(?=.*[a-z])/.test(password) ? 'bg-score-human' : 'bg-silver'}`} />
                                         <div className={`h-full flex-1 transition-colors ${/(?=.*\d)/.test(password) ? 'bg-score-human' : 'bg-silver'}`} />
-                                        <div className={`h-full flex-1 transition-colors ${/(?=.*[@$!%*?&])/.test(password) ? 'bg-score-human' : 'bg-silver'}`} />
+                                        <div className={`h-full flex-1 transition-colors ${/(?=.*[^a-zA-Z0-9])/.test(password) ? 'bg-score-human' : 'bg-silver'}`} />
                                     </div>
                                     <p className="text-[10px] font-bold text-ash flex justify-between">
                                         <span>Weak</span>

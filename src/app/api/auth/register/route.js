@@ -5,7 +5,7 @@ import bcrypt from 'bcrypt';
 import { createEmailVerificationToken } from '@/lib/auth-security';
 import { sendVerificationEmail } from '@/lib/email';
 
-const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z0-9]).{8,}$/;
 
 export async function POST(req) {
     try {

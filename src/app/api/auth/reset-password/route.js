@@ -12,8 +12,9 @@ export async function POST(req) {
             return NextResponse.json({ error: 'Token and new password are required' }, { status: 400 });
         }
 
-        if (password.length < 8) {
-            return NextResponse.json({ error: 'Password must be at least 8 characters long' }, { status: 400 });
+        const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z0-9]).{8,}$/;
+        if (!PASSWORD_REGEX.test(password)) {
+            return NextResponse.json({ error: 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character' }, { status: 400 });
         }
 
         // Validate the reset token
@@ -24,7 +25,7 @@ export async function POST(req) {
         }
 
         const prisma = getPrisma();
-        
+
         // Hash new password
         const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -35,8 +36,8 @@ export async function POST(req) {
         });
 
         // Delete the consumed token (already done inside validateResetToken upon expiry, but explicitly do on success here)
-        await prisma.passwordResetToken.delete({ 
-            where: { token } 
+        await prisma.passwordResetToken.delete({
+            where: { token }
         });
 
         return NextResponse.json({ success: true, message: 'Password has been successfully reset' });

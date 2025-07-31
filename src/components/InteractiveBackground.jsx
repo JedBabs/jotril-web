@@ -32,9 +32,11 @@ export default function InteractiveBackground() {
         // Read CSS vars for colors
         const colors = getThemeColors();
 
-        const PARTICLE_COUNT = 65;
-        const CONNECT_DIST = 130;
-        const MOUSE_RADIUS = 160;
+        // Responsive settings to improve performance
+        const isMobile = width < 768;
+        const PARTICLE_COUNT = isMobile ? 25 : 50;
+        const CONNECT_DIST = isMobile ? 80 : 120;
+        const MOUSE_RADIUS = isMobile ? 100 : 150;
         const MOUSE_REPEL_FORCE = 0.18;
 
         // Rich color palette per theme

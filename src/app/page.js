@@ -8,6 +8,7 @@ import HeatmapViewer from "@/components/HeatmapViewer";
 import ScoreGauge from "@/components/ScoreGauge";
 import ColdStartOverlay from "@/components/ColdStartOverlay";
 import ToastContainer, { showToast } from "@/components/Toast";
+import { usePPP } from "@/hooks/usePPP";
 import QuotaBar from "@/components/QuotaBar";
 import SignUpNudge from "@/components/SignUpNudge";
 import InteractiveBackground from "@/components/InteractiveBackground";
@@ -200,6 +201,7 @@ export default function Home() {
         setMounted(true);
     }, []);
 
+    const { premiumPricing } = usePPP();
     const { isActive, openProcess, simulateProgress, updateProcess, closeProcess } = useProcess();
     const [results, setResults] = useState(null);
     const [breakdown, setBreakdown] = useState(null);
@@ -617,42 +619,40 @@ export default function Home() {
                                 </div>
 
                                 <div className="flex gap-3">
-                                    {scannedFile && (
-                                        <motion.button
-                                            whileHover={{ scale: 1.03, y: -2 }}
-                                            whileTap={{ scale: 0.98 }}
-                                            onClick={async () => {
-                                                openProcess("download", "Generating PDF", "Compiling styles & layout...");
-                                                simulateProgress([
-                                                    { progress: 30, duration: 300, step: "Extracting Document Hierarchy..." },
-                                                    { progress: 70, duration: 400, step: "Applying Analytics Markup..." }
-                                                ]);
-                                                try {
-                                                    const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
-                                                    libGen({
-                                                        filename: scannedFile.name,
-                                                        breakdown,
-                                                        overallLabel,
-                                                        chunks: results,
-                                                        sentenceCount: results.length,
-                                                        wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
-                                                        sourceHtml
-                                                    });
-                                                } finally {
-                                                    closeProcess();
-                                                }
-                                            }}
-                                            className="flex items-center gap-2 px-6 py-2.5 rounded-full font-bold text-sm text-white shadow-lg transition-all"
-                                            style={{
-                                                background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple))",
-                                            }}
-                                        >
-                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                            </svg>
-                                            Download PDF Report
-                                        </motion.button>
-                                    )}
+                                    <motion.button
+                                        whileHover={{ scale: 1.03, y: -2 }}
+                                        whileTap={{ scale: 0.98 }}
+                                        onClick={async () => {
+                                            openProcess("download", "Generating PDF", "Compiling styles & layout...");
+                                            simulateProgress([
+                                                { progress: 30, duration: 300, step: "Extracting Document Hierarchy..." },
+                                                { progress: 70, duration: 400, step: "Applying Analytics Markup..." }
+                                            ]);
+                                            try {
+                                                const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
+                                                libGen({
+                                                    filename: scannedFile ? scannedFile.name : 'Text_Scan',
+                                                    breakdown,
+                                                    overallLabel,
+                                                    chunks: results,
+                                                    sentenceCount: results.length,
+                                                    wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
+                                                    sourceHtml
+                                                });
+                                            } finally {
+                                                closeProcess();
+                                            }
+                                        }}
+                                        className="flex items-center gap-2 px-6 py-2.5 rounded-full font-bold text-sm text-white shadow-lg transition-all"
+                                        style={{
+                                            background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple))",
+                                        }}
+                                    >
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                        </svg>
+                                        Download PDF Report
+                                    </motion.button>
 
                                     <motion.button
                                         whileHover={{ scale: 1.03 }}
@@ -980,9 +980,14 @@ export default function Home() {
                                 </motion.div>
 
                                 <p className="text-xs font-bold uppercase tracking-[0.18em] mt-3" style={{ color: "var(--dyn-accent-blue)" }}>Pro</p>
-                                <p className="text-5xl font-black mt-3" style={{ color: "var(--dyn-text-navy)" }}>
-                                    $19<span className="text-xl font-medium" style={{ color: "var(--dyn-ash)" }}>/mo</span>
+                                <p className="text-5xl font-black mt-3 transition-opacity duration-500" style={{ color: "var(--dyn-text-navy)" }}>
+                                    {premiumPricing.currency}{premiumPricing.price}<span className="text-xl font-medium" style={{ color: "var(--dyn-ash)" }}>/mo</span>
                                 </p>
+                                {premiumPricing.label && (
+                                    <p className="text-[10px] font-bold mt-1.5 uppercase tracking-widest" style={{ color: "var(--dyn-ash)" }}>
+                                        {premiumPricing.label}
+                                    </p>
+                                )}
                                 <p className="text-sm mt-2" style={{ color: "var(--dyn-ash)" }}>For professionals and teams</p>
                                 <div className="my-6 h-px" style={{ background: "var(--dyn-silver)" }} />
                                 <ul className="space-y-3">

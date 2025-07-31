@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { usePPP } from "@/hooks/usePPP";
 
 /**
  * SignUpNudge — Contextual conversion banner.
@@ -12,6 +13,7 @@ import { motion, AnimatePresence } from "framer-motion";
  */
 export default function SignUpNudge({ variant = "guest" }) {
     const [dismissed, setDismissed] = useState(false);
+    const { premiumPricing } = usePPP();
 
     useEffect(() => {
         const key = `jotril_nudge_${variant}_dismissed`;
@@ -51,8 +53,8 @@ export default function SignUpNudge({ variant = "guest" }) {
                     <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
                         {/* Icon */}
                         <div className={`flex-shrink-0 w-14 h-14 rounded-2xl flex items-center justify-center ${isGuest
-                                ? "bg-accent-blue/10"
-                                : "bg-gradient-to-br from-accent-blue via-accent-purple to-accent-pink"
+                            ? "bg-accent-blue/10"
+                            : "bg-gradient-to-br from-accent-blue via-accent-purple to-accent-pink"
                             }`}>
                             {isGuest ? (
                                 <svg className="w-7 h-7 text-accent-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -75,7 +77,7 @@ export default function SignUpNudge({ variant = "guest" }) {
                             <p className="text-sm text-ash mt-1 leading-relaxed">
                                 {isGuest
                                     ? "Track your scan history, get 2× the daily points, and access your personal dashboard — completely free."
-                                    : "6× daily point budget, developer API access, 20MB uploads, and priority engine access. Starting at $19/mo."}
+                                    : `6× daily point budget, developer API access, 20MB uploads, and priority engine access. Starting at ${premiumPricing.currency}${premiumPricing.price}/mo.`}
                             </p>
                         </div>
 
@@ -83,8 +85,8 @@ export default function SignUpNudge({ variant = "guest" }) {
                         <a
                             href={isGuest ? "/auth/signup" : "#pricing"}
                             className={`flex-shrink-0 btn-shimmer font-bold text-sm py-3 px-7 rounded-full transition-all active:scale-95 ${isGuest
-                                    ? "bg-accent-blue hover:bg-accent-blue-light text-white shadow-[0_4px_20px_rgba(37,99,235,0.3)]"
-                                    : "bg-gradient-to-r from-accent-blue via-accent-purple to-accent-pink text-white shadow-[0_4px_20px_rgba(124,58,237,0.3)]"
+                                ? "bg-accent-blue hover:bg-accent-blue-light text-white shadow-[0_4px_20px_rgba(37,99,235,0.3)]"
+                                : "bg-gradient-to-r from-accent-blue via-accent-purple to-accent-pink text-white shadow-[0_4px_20px_rgba(124,58,237,0.3)]"
                                 }`}
                         >
                             {isGuest ? "Sign Up Free →" : "View Pro Plans →"}

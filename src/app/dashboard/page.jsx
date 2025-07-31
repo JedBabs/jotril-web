@@ -360,36 +360,34 @@ export default function EnhancedAccountPortal() {
                                                 <h3 className="text-xl font-black mt-1">Analysis Results</h3>
                                             </div>
                                             <div className="flex gap-3">
-                                                {scannedFile && (
-                                                    <motion.button
-                                                        whileHover={{ scale: 1.05 }}
-                                                        whileTap={{ scale: 0.95 }}
-                                                        onClick={async () => {
-                                                            openProcess("download", "Generating Report PDF", "Compiling styles & layout...");
-                                                            simulateProgress([
-                                                                { progress: 30, duration: 400, step: "Extracting semantic tokens..." },
-                                                                { progress: 70, duration: 600, step: "Executing predictive layers..." }
-                                                            ]);
-                                                            try {
-                                                                const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
-                                                                libGen({
-                                                                    filename: scannedFile.name,
-                                                                    breakdown,
-                                                                    overallLabel,
-                                                                    chunks: results,
-                                                                    sentenceCount: results.length,
-                                                                    wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
-                                                                    sourceHtml
-                                                                });
-                                                            } finally {
-                                                                closeProcess();
-                                                            }
-                                                        }}
-                                                        className="px-5 py-2.5 bg-gradient-to-tr from-accent-blue to-accent-purple text-white rounded-xl font-bold text-xs shadow-lg"
-                                                    >
-                                                        Download PDF
-                                                    </motion.button>
-                                                )}
+                                                <motion.button
+                                                    whileHover={{ scale: 1.05 }}
+                                                    whileTap={{ scale: 0.95 }}
+                                                    onClick={async () => {
+                                                        openProcess("download", "Generating Report PDF", "Compiling styles & layout...");
+                                                        simulateProgress([
+                                                            { progress: 30, duration: 400, step: "Extracting semantic tokens..." },
+                                                            { progress: 70, duration: 600, step: "Executing predictive layers..." }
+                                                        ]);
+                                                        try {
+                                                            const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
+                                                            libGen({
+                                                                filename: scannedFile ? scannedFile.name : 'Text_Scan',
+                                                                breakdown,
+                                                                overallLabel,
+                                                                chunks: results,
+                                                                sentenceCount: results.length,
+                                                                wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
+                                                                sourceHtml
+                                                            });
+                                                        } finally {
+                                                            closeProcess();
+                                                        }
+                                                    }}
+                                                    className="px-5 py-2.5 bg-gradient-to-tr from-accent-blue to-accent-purple text-white rounded-xl font-bold text-xs shadow-lg"
+                                                >
+                                                    Download PDF
+                                                </motion.button>
                                                 <motion.button
                                                     whileHover={{ scale: 1.05 }}
                                                     whileTap={{ scale: 0.95 }}
