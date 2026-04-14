@@ -45,3 +45,7 @@ next-env.d.ts
 # database files
 prisma/*.db
 prisma/*.db-journal
+
+# local gh-cli install (not part of the project)
+gh-cli/
+gh.zip
