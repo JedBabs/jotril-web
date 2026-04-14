@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import ThemeSwitcher from "./ThemeSwitcher";
 import GlitchLogo from "./GlitchLogo";
+import { useSession } from "next-auth/react";
 
 const navLinks = [
     { label: "How It Works", href: "#how-it-works" },
@@ -101,6 +102,7 @@ function MagneticButton({ href, children, className, style, onClick }) {
 }
 
 export default function Navbar({ session, onSignOut }) {
+    const { update } = useSession();
     const [scrolled, setScrolled] = useState(false);
     const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -109,6 +111,20 @@ export default function Navbar({ session, onSignOut }) {
         window.addEventListener("scroll", handleScroll, { passive: true });
         return () => window.removeEventListener("scroll", handleScroll);
     }, []);
+
+    // Universal session role sync
+    useEffect(() => {
+        if (isLoggedIn) {
+            fetch('/api/dashboard')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.tier && session.user.role !== data.tier) {
+                        update({ role: data.tier });
+                    }
+                })
+                .catch(() => { });
+        }
+    }, [isLoggedIn, update, session]);
 
     const isLoggedIn = !!session?.user;
     const userRole = session?.user?.role || "FREE";
@@ -163,7 +179,17 @@ export default function Navbar({ session, onSignOut }) {
                             <span className="text-xs font-medium max-w-[130px] truncate" style={{ color: "var(--dyn-ash)" }}>
                                 {userEmail}
                             </span>
+
                             <MagneticLink href="/dashboard">Dashboard</MagneticLink>
+
+                            {userRole === 'ADMIN' && (
+                                <MagneticLink href="/admin">
+                                    <span className="flex items-center gap-1.5 text-score-human">
+                                        <div className="w-1 h-1 rounded-full bg-score-human animate-pulse" />
+                                        Admin Panel
+                                    </span>
+                                </MagneticLink>
+                            )}
                             <button
                                 onClick={onSignOut}
                                 className="text-sm font-semibold transition-colors duration-200"
@@ -268,6 +294,16 @@ export default function Navbar({ session, onSignOut }) {
                                     >
                                         Dashboard
                                     </a>
+
+                                    {userRole === 'ADMIN' && (
+                                        <a
+                                            href="/admin"
+                                            onClick={() => setMobileOpen(false)}
+                                            className="block text-center font-bold text-sm py-3 px-6 rounded-2xl bg-navy text-white"
+                                        >
+                                            Admin Hub
+                                        </a>
+                                    )}
                                     <button
                                         onClick={() => { onSignOut?.(); setMobileOpen(false); }}
                                         className="block w-full text-center text-sm font-semibold py-2"

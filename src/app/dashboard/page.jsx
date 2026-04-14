@@ -23,6 +23,13 @@ import GlitchLogo from "@/components/GlitchLogo";
 import SignUpNudge from "@/components/SignUpNudge";
 import InteractiveBackground from "@/components/InteractiveBackground";
 import QuotaBar from "@/components/QuotaBar";
+import FileUploader from "@/components/FileUploader";
+import HeatmapViewer from "@/components/HeatmapViewer";
+import ScoreGauge from "@/components/ScoreGauge";
+import ColdStartOverlay from "@/components/ColdStartOverlay";
+import ToastContainer, { showToast } from "@/components/Toast";
+import { generateHardwareVector } from "@/lib/fingerprint";
+import { generatePDFReport } from "@/lib/pdf-generator";
 
 const tierGradients = {
     FREE: "from-accent-blue to-accent-cyan",
@@ -41,12 +48,27 @@ export default function EnhancedAccountPortal() {
     const [isDataLoaded, setIsDataLoaded] = useState(false);
     const [copiedId, setCopiedId] = useState(null);
 
+    // Analysis State
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [results, setResults] = useState(null);
+    const [breakdown, setBreakdown] = useState(null);
+    const [overallLabel, setOverallLabel] = useState("");
+    const [coldStart, setColdStart] = useState(false);
+    const [deviceHash, setDeviceHash] = useState(null);
+    const [lastText, setLastText] = useState("");
+    const [scannedFile, setScannedFile] = useState(null);
+    const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
+
     // Sync session role if database role has changed (e.g. after manual upgrade)
     useEffect(() => {
         if (stats?.tier && session?.user?.role && stats.tier !== session.user.role) {
             update({ role: stats.tier });
         }
     }, [stats, session, update]);
+
+    useEffect(() => {
+        generateHardwareVector().then((vector) => setDeviceHash(vector));
+    }, []);
 
     useEffect(() => {
         if (status === 'unauthenticated') {
@@ -93,6 +115,61 @@ export default function EnhancedAccountPortal() {
         navigator.clipboard.writeText(key);
         setCopiedId(id);
         setTimeout(() => setCopiedId(null), 2000);
+    };
+
+    const handleAnalyze = async (text, file = null) => {
+        if ((!text || text.trim() === "") && !file) {
+            return showToast("Please enter text or upload a file first.", "warning");
+        }
+        setIsAnalyzing(true);
+        setResults(null);
+        setColdStart(false);
+        setScannedFile(file);
+        setLastText(text || file?.name || "");
+
+        try {
+            let res;
+            if (file) {
+                const formData = new FormData();
+                formData.append("file", file);
+                formData.append("hardwareFootprint", JSON.stringify(deviceHash));
+                res = await fetch("/api/analyze", { method: "POST", body: formData });
+            } else {
+                res = await fetch("/api/analyze", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ text, hardwareFootprint: deviceHash }),
+                });
+            }
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                if (data.type === "COLD_START") { setColdStart(true); setIsAnalyzing(false); return; }
+                if (data.limitExceeded) {
+                    showToast(data.error || "Quota limit exceeded. Please upgrade your tier.", "error");
+                    setIsAnalyzing(false);
+                    return;
+                }
+                showToast(data.error || "Analysis engine returned an error.", "error");
+                setIsAnalyzing(false);
+                return;
+            }
+
+            if (data.chunks) {
+                setResults(data.chunks);
+                setBreakdown(data.breakdown || {});
+                setOverallLabel(data.overallLabel || "");
+                showToast(data.cached ? "Results loaded from cache!" : `Analysis complete!`, "success");
+            }
+            setIsAnalyzing(false);
+            setQuotaRefreshKey(k => k + 1);
+            // Refresh dashboard data too
+            fetch('/api/dashboard').then(r => r.json()).then(d => setStats(d));
+        } catch (e) {
+            showToast("Failed to reach analysis engine.", "error");
+            setIsAnalyzing(false);
+        }
     };
 
     if (status === 'loading' || !isDataLoaded) {
@@ -146,8 +223,13 @@ export default function EnhancedAccountPortal() {
                     </div>
 
                     <div className="flex items-center gap-4">
-                        <div className="flex flex-col items-end mr-2">
-                            <p className="text-xs font-bold text-ash uppercase tracking-widest">{tier} ACCOUNT</p>
+                        <div className="flex flex-col items-end mr-2 text-right">
+                            <div className="flex items-center gap-2">
+                                {tier === 'ADMIN' && (
+                                    <span className="px-2 py-0.5 rounded-full bg-score-human/10 text-score-human text-[9px] font-black border border-score-human/20 tracking-tighter uppercase">Admin</span>
+                                )}
+                                <p className="text-xs font-bold text-ash uppercase tracking-widest">{tier} ACCOUNT</p>
+                            </div>
                             <p className="text-sm font-black text-navy">{stats?.email}</p>
                         </div>
                         <button
@@ -159,6 +241,8 @@ export default function EnhancedAccountPortal() {
                     </div>
                 </header>
 
+                <ToastContainer />
+
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
 
                     {/* LEFT COLUMN: Main Stats & Management */}
@@ -168,21 +252,106 @@ export default function EnhancedAccountPortal() {
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
                             <div>
                                 <h1 className="text-4xl font-black tracking-tight">Account Portal</h1>
-                                <p className="text-ash font-medium mt-1">Activity insights and system management.</p>
+                                <p className="text-ash font-medium mt-1">Activity insights and content analysis.</p>
                             </div>
 
-                            {tier === 'ADMIN' && (
+                            <div className="flex flex-wrap gap-4">
+                                {tier === 'ADMIN' && (
+                                    <motion.button
+                                        whileHover={{ scale: 1.05, y: -2 }}
+                                        whileTap={{ scale: 0.95 }}
+                                        onClick={() => router.push('/admin')}
+                                        className="flex items-center gap-3 px-6 py-3 bg-navy text-white rounded-2xl font-bold shadow-2xl text-sm btn-shimmer"
+                                    >
+                                        <Shield className="w-5 h-5 text-score-human" />
+                                        Access Admin Hub
+                                        <ArrowUpRight className="w-4 h-4 opacity-50" />
+                                    </motion.button>
+                                )}
+
                                 <motion.button
-                                    whileHover={{ scale: 1.05, y: -2 }}
+                                    whileHover={{ scale: 1.05 }}
                                     whileTap={{ scale: 0.95 }}
-                                    onClick={() => router.push('/admin')}
-                                    className="flex items-center gap-3 px-6 py-3 bg-navy text-white rounded-2xl font-bold shadow-2xl text-sm btn-shimmer"
+                                    onClick={() => document.getElementById('scanner-anchor')?.scrollIntoView({ behavior: 'smooth' })}
+                                    className="flex items-center gap-3 px-6 py-3 glass-card rounded-2xl font-bold text-sm"
                                 >
-                                    <Shield className="w-5 h-5 text-score-human" />
-                                    Access Admin Hub
-                                    <ArrowUpRight className="w-4 h-4 opacity-50" />
+                                    <Sparkles className="w-5 h-5 text-accent-blue" />
+                                    Start New Scan
                                 </motion.button>
-                            )}
+                            </div>
+                        </div>
+
+                        {/* Integrated Scanner Section */}
+                        <div id="scanner-anchor" className="space-y-8 pt-4">
+                            <AnimatePresence mode="wait">
+                                {!results && !isAnalyzing && !coldStart && (
+                                    <motion.div
+                                        key="uploader"
+                                        initial={{ opacity: 0, y: 20 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, scale: 0.95 }}
+                                        className="liquid-card overflow-hidden"
+                                    >
+                                        <div className="rounded-[32px] p-1 bg-gradient-to-br from-silver/20 to-transparent">
+                                            <div className="rounded-[31px]" style={{ background: "var(--dyn-glass-bg)", backdropFilter: "blur(24px)" }}>
+                                                <FileUploader onAnalyze={handleAnalyze} disabled={isAnalyzing} deviceHash={deviceHash} />
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                )}
+
+                                {isAnalyzing && (
+                                    <div className="py-20 flex flex-col items-center justify-center space-y-8 glass-card rounded-[32px]">
+                                        <div className="relative w-20 h-20">
+                                            <div className="absolute inset-0 rounded-full border-[3px] border-silver border-t-accent-blue animate-spin" />
+                                            <div className="absolute inset-0 flex items-center justify-center">
+                                                <Zap className="w-6 h-6 text-accent-blue animate-pulse" />
+                                            </div>
+                                        </div>
+                                        <div className="text-center">
+                                            <p className="font-black text-xl">Analyzing Content...</p>
+                                            <p className="text-sm text-ash font-medium mt-1">Jotril V2 Engine is processing your request</p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {coldStart && (
+                                    <ColdStartOverlay onRetry={() => handleAnalyze(lastText)} />
+                                )}
+
+                                {results && !isAnalyzing && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 30 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        className="space-y-8"
+                                    >
+                                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 glass-card p-6 rounded-[24px]">
+                                            <div>
+                                                <p className="text-[10px] font-black text-accent-blue uppercase tracking-widest">Deep Scan Complete</p>
+                                                <h3 className="text-xl font-black mt-1">Analysis Results</h3>
+                                            </div>
+                                            <div className="flex gap-3">
+                                                {scannedFile && (
+                                                    <button
+                                                        onClick={() => generatePDFReport({ filename: scannedFile.name, breakdown, overallLabel, chunks: results, sentenceCount: results.length, wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0) })}
+                                                        className="px-5 py-2.5 bg-gradient-to-tr from-accent-blue to-accent-purple text-white rounded-xl font-bold text-xs shadow-lg"
+                                                    >
+                                                        Download PDF
+                                                    </button>
+                                                )}
+                                                <button
+                                                    onClick={() => setResults(null)}
+                                                    className="px-5 py-2.5 glass-card rounded-xl font-bold text-xs"
+                                                >
+                                                    New Scan
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <ScoreGauge breakdown={breakdown} overallLabel={overallLabel} sentenceCount={results.length} wordCount={results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0)} />
+                                        <HeatmapViewer chunks={results} />
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
                         </div>
 
                         {/* Stats Overview Grid */}
@@ -316,6 +485,7 @@ export default function EnhancedAccountPortal() {
                             </div>
                         </div>
 
+                        <QuotaBar deviceHash={deviceHash} refreshKey={quotaRefreshKey} session={session} />
                     </div>
 
                     {/* RIGHT COLUMN: Tier & Current Quota */}

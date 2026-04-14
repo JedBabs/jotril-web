@@ -203,7 +203,19 @@ export default function Home() {
     const [scannedFile, setScannedFile] = useState(null);
     const [openFaq, setOpenFaq] = useState(null);
     const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
-    const { data: session } = useSession();
+    const { data: session, status, update } = useSession();
+    const router = useRouter();
+
+    // 1. Redirect to dashboard if logged in
+    // 2. Sync session role if database role has changed
+    useEffect(() => {
+        if (status === 'authenticated') {
+            if (session?.user?.role && stats?.tier && session.user.role !== stats.tier) {
+                update({ role: stats.tier });
+            }
+            router.push('/dashboard');
+        }
+    }, [status, router, session, stats, update]);
 
     // Mouse parallax for hero orbs
     const mouseX = useMotionValue(0);
