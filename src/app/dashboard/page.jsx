@@ -32,7 +32,7 @@ const tierGradients = {
 };
 
 export default function EnhancedAccountPortal() {
-    const { data: session, status } = useSession();
+    const { data: session, status, update } = useSession();
     const router = useRouter();
 
     const [keys, setKeys] = useState([]);
@@ -40,6 +40,13 @@ export default function EnhancedAccountPortal() {
     const [stats, setStats] = useState(null);
     const [isDataLoaded, setIsDataLoaded] = useState(false);
     const [copiedId, setCopiedId] = useState(null);
+
+    // Sync session role if database role has changed (e.g. after manual upgrade)
+    useEffect(() => {
+        if (stats?.tier && session?.user?.role && stats.tier !== session.user.role) {
+            update({ role: stats.tier });
+        }
+    }, [stats, session, update]);
 
     useEffect(() => {
         if (status === 'unauthenticated') {
