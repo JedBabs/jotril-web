@@ -1,9 +1,28 @@
 "use client";
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useSession } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import {
+    Activity,
+    Shield,
+    Zap,
+    History,
+    Key,
+    ExternalLink,
+    ChevronLeft,
+    Clock,
+    FileText,
+    ArrowUpRight,
+    Copy,
+    Check,
+    Trash2,
+    Lock
+} from 'lucide-react';
+import GlitchLogo from "@/components/GlitchLogo";
 import SignUpNudge from "@/components/SignUpNudge";
+import InteractiveBackground from "@/components/InteractiveBackground";
+import QuotaBar from "@/components/QuotaBar";
 
 const tierGradients = {
     FREE: "from-accent-blue to-accent-cyan",
@@ -12,7 +31,7 @@ const tierGradients = {
     ADMIN: "from-score-human to-accent-cyan",
 };
 
-export default function DeveloperDashboard() {
+export default function EnhancedAccountPortal() {
     const { data: session, status } = useSession();
     const router = useRouter();
 
@@ -30,16 +49,23 @@ export default function DeveloperDashboard() {
 
     useEffect(() => {
         if (status === 'authenticated') {
-            Promise.all([
-                fetch('/api/keys').then(r => r.json()),
-                fetch('/api/dashboard').then(r => r.json())
-            ])
-                .then(([keysData, dashData]) => {
+            const fetchData = async () => {
+                try {
+                    const [keysRes, dashRes] = await Promise.all([
+                        fetch('/api/keys'),
+                        fetch('/api/dashboard')
+                    ]);
+                    const keysData = await keysRes.json();
+                    const dashData = await dashRes.json();
+
                     if (keysData.keys) setKeys(keysData.keys);
                     if (!dashData.error) setStats(dashData);
                     setIsDataLoaded(true);
-                })
-                .catch(console.error);
+                } catch (err) {
+                    console.error("Dashboard data fetch failed:", err);
+                }
+            };
+            fetchData();
         }
     }, [status]);
 
@@ -76,6 +102,8 @@ export default function DeveloperDashboard() {
     const tier = stats?.tier || 'FREE';
     const totalRequests = stats?.totalRequests || 0;
     const spentPoints = stats?.totalPointsSpent || 0;
+    const purchasedPoints = stats?.purchasedPoints || 0;
+    const recentScans = stats?.recentScans || [];
 
     let quotaMax = 100;
     if (tier === 'PRO') quotaMax = 500;
@@ -86,170 +114,314 @@ export default function DeveloperDashboard() {
     const gradient = tierGradients[tier] || tierGradients.FREE;
 
     return (
-        <div className="min-h-screen bg-white text-navy font-sans aurora-bg relative">
-            <div className="aurora-accent top-[5%] right-[20%]" />
-            <div className="floating-orb w-3 h-3 bg-accent-blue/15 top-[15%] left-[8%]" style={{ animationDelay: '1s' }} />
-            <div className="floating-orb w-2 h-2 bg-accent-purple/15 bottom-[20%] right-[10%]" style={{ animationDelay: '4s' }} />
+        <div className="min-h-screen bg-white text-navy font-sans relative overflow-hidden">
+            <InteractiveBackground />
 
-            <div className="relative z-10 max-w-6xl mx-auto p-6 md:p-10 space-y-10">
+            {/* Aurora effects */}
+            <div className="aurora-accent top-[-10%] right-[15%] opacity-40 blur-[120px]" />
+            <div className="aurora-accent bottom-[-20%] left-[5%] opacity-30 blur-[100px] !bg-accent-purple" />
 
-                {/* Header */}
-                <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 pb-8 border-b border-silver"
-                >
-                    <div>
+            <div className="relative z-10 max-w-7xl mx-auto p-6 md:p-12 space-y-12">
+
+                {/* Navbar / Header */}
+                <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                    <div className="flex items-center gap-8">
+                        <GlitchLogo />
+                        <div className="h-8 w-px bg-silver hidden md:block" />
                         <motion.button
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
+                            whileHover={{ x: -2 }}
                             onClick={() => router.push('/')}
-                            className="inline-flex items-center gap-2 text-sm font-bold text-ash hover:text-navy transition-colors mb-4 glass-card !rounded-full px-4 py-2"
+                            className="flex items-center gap-2 text-sm font-bold text-ash hover:text-navy transition-colors"
                         >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                            </svg>
+                            <ChevronLeft className="w-4 h-4" />
                             Back to Scanner
                         </motion.button>
-                        <h1 className="text-3xl md:text-4xl font-black tracking-tight text-navy">Account Portal</h1>
-                        <p className="text-ash mt-2 text-base font-medium">Manage your keys, monitor quotas, and track usage.</p>
                     </div>
-                    <motion.button
-                        whileHover={{ scale: 1.03 }}
-                        whileTap={{ scale: 0.97 }}
-                        onClick={handleCreateKey}
-                        disabled={isGenerating}
-                        className="btn-shimmer bg-accent-blue text-white font-bold py-3 px-7 rounded-full shadow-[0_4px_17px_rgba(37,99,235,0.3)] text-sm disabled:opacity-50 hover:bg-accent-blue-light transition-all"
-                    >
-                        {isGenerating ? "Generating..." : "+ Generate Secret Key"}
-                    </motion.button>
-                </motion.div>
 
-                {/* Pro upgrade nudge for FREE users */}
-                {tier === "FREE" && <SignUpNudge variant="free" />}
-
-                {/* Stats Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.1 }}
-                        className="glass-card rounded-2xl p-7 relative overflow-hidden hover-lift"
-                    >
-                        <div className="absolute -top-12 -right-12 w-36 h-36 bg-accent-blue/5 rounded-full blur-2xl pointer-events-none" />
-                        <h3 className="text-ash uppercase tracking-[0.18em] text-[11px] font-bold mb-3">Total Requests</h3>
-                        <p className="text-4xl font-black font-mono tracking-tighter text-navy">{totalRequests}</p>
-                    </motion.div>
-
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.2 }}
-                        className="glass-card rounded-2xl p-7 relative overflow-hidden hover-lift"
-                    >
-                        <div className="absolute -top-12 -right-12 w-36 h-36 bg-accent-purple/5 rounded-full blur-2xl pointer-events-none" />
-                        <h3 className="text-ash uppercase tracking-[0.18em] text-[11px] font-bold mb-3">Current Tier</h3>
-                        <p className={`text-4xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-r ${gradient}`}>{tier}</p>
-                    </motion.div>
-
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.3 }}
-                        className="relative glow-border rounded-2xl"
-                    >
-                        <div className={`bg-gradient-to-br ${gradient} rounded-2xl p-7 relative overflow-hidden`}>
-                            <h3 className="text-white/70 uppercase tracking-[0.18em] text-[11px] font-bold mb-4">Daily Usage Quota</h3>
-                            <div className="w-full bg-white/20 rounded-full h-3">
-                                <motion.div
-                                    initial={{ width: 0 }}
-                                    animate={{ width: `${tier === 'ADMIN' ? 0 : fillRatio}%` }}
-                                    transition={{ duration: 1.2, ease: "easeOut" }}
-                                    className="bg-white h-3 rounded-full shadow-[0_0_15px_rgba(255,255,255,0.6)]"
-                                />
-                            </div>
-                            <p className="text-white/80 mt-3 text-sm font-medium">
-                                {tier === 'ADMIN' ? '∞ Unlimited' : `${spentPoints} of ${quotaMax}`} points used today
-                            </p>
+                    <div className="flex items-center gap-4">
+                        <div className="flex flex-col items-end mr-2">
+                            <p className="text-xs font-bold text-ash uppercase tracking-widest">{tier} ACCOUNT</p>
+                            <p className="text-sm font-black text-navy">{stats?.email}</p>
                         </div>
-                    </motion.div>
-                </div>
+                        <button
+                            onClick={() => signOut()}
+                            className="p-3 glass-card !rounded-full text-ash hover:text-score-ai transition-colors"
+                        >
+                            <Lock className="w-4 h-4" />
+                        </button>
+                    </div>
+                </header>
 
-                {/* API Keys Table */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.4 }}
-                    className="glass-card rounded-2xl overflow-hidden"
-                >
-                    <table className="w-full text-left border-collapse">
-                        <thead>
-                            <tr className="bg-surface text-ash text-[11px] tracking-[0.15em] uppercase border-b border-silver">
-                                <th className="p-5 font-bold">Secret Key Token</th>
-                                <th className="p-5 font-bold">Created</th>
-                                <th className="p-5 font-bold text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-silver/50">
-                            {keys.length === 0 ? (
-                                <tr>
-                                    <td colSpan="3" className="p-10 text-center">
-                                        <div className="flex flex-col items-center gap-3 text-ash">
-                                            <svg className="w-10 h-10 text-silver-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                                            </svg>
-                                            <p className="text-sm font-medium">No API keys generated yet.</p>
-                                            <p className="text-xs text-ash-light">Click "Generate Secret Key" to create one.</p>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ) : keys.map((k, i) => (
-                                <motion.tr
-                                    key={k.id}
-                                    initial={{ opacity: 0, x: -10 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    transition={{ delay: i * 0.05 }}
-                                    className="hover:bg-surface/50 transition-colors group"
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+                    {/* LEFT COLUMN: Main Stats & Management */}
+                    <div className="lg:col-span-8 space-y-8">
+
+                        {/* Welcome & Admin CTA */}
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
+                            <div>
+                                <h1 className="text-4xl font-black tracking-tight">Account Portal</h1>
+                                <p className="text-ash font-medium mt-1">Activity insights and system management.</p>
+                            </div>
+
+                            {tier === 'ADMIN' && (
+                                <motion.button
+                                    whileHover={{ scale: 1.05, y: -2 }}
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={() => router.push('/admin')}
+                                    className="flex items-center gap-3 px-6 py-3 bg-navy text-white rounded-2xl font-bold shadow-2xl text-sm btn-shimmer"
                                 >
-                                    <td className="p-5">
-                                        <div className="flex items-center gap-2">
-                                            <code className="font-mono text-sm text-navy font-bold tracking-wider">{k.key}</code>
-                                            <motion.button
-                                                whileTap={{ scale: 0.9 }}
-                                                onClick={() => handleCopyKey(k.key, k.id)}
-                                                className="opacity-0 group-hover:opacity-100 transition-opacity text-ash hover:text-accent-blue p-1"
+                                    <Shield className="w-5 h-5 text-score-human" />
+                                    Access Admin Hub
+                                    <ArrowUpRight className="w-4 h-4 opacity-50" />
+                                </motion.button>
+                            )}
+                        </div>
+
+                        {/* Stats Overview Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="glass-card rounded-[24px] p-8 relative group overflow-hidden">
+                                <Activity className="w-5 h-5 text-accent-blue mb-4" />
+                                <p className="text-xs font-bold text-ash uppercase tracking-widest">Lifetime Scans</p>
+                                <p className="text-4xl font-black mt-2 text-navy tracking-tighter">{totalRequests}</p>
+                                <div className="absolute -bottom-8 -right-8 w-24 h-24 bg-accent-blue/5 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700" />
+                            </div>
+
+                            <div className="glass-card rounded-[24px] p-8 relative group overflow-hidden">
+                                <Zap className="w-5 h-5 text-accent-purple mb-4" />
+                                <p className="text-xs font-bold text-ash uppercase tracking-widest">Usage Burn</p>
+                                <p className="text-4xl font-black mt-2 text-navy tracking-tighter">{spentPoints}<span className="text-sm text-ash ml-1 font-bold">pts</span></p>
+                                <div className="absolute -bottom-8 -right-8 w-24 h-24 bg-accent-purple/5 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700" />
+                            </div>
+
+                            <div className="glass-card rounded-[24px] p-8 relative group overflow-hidden bg-gradient-to-br from-score-human/[0.03] to-transparent">
+                                <Sparkles className="w-5 h-5 text-score-human mb-4" />
+                                <p className="text-xs font-bold text-ash uppercase tracking-widest">Points Wallet</p>
+                                <p className="text-4xl font-black mt-2 text-score-human tracking-tighter">{purchasedPoints}</p>
+                                <div className="absolute -bottom-8 -right-8 w-24 h-24 bg-score-human/5 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700" />
+                            </div>
+                        </div>
+
+                        {/* Recent Activity History */}
+                        <div className="glass-card rounded-[32px] overflow-hidden p-1">
+                            <div className="p-6 pb-2 flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-navy/5 rounded-lg text-navy">
+                                        <History className="w-4 h-4" />
+                                    </div>
+                                    <h3 className="font-black text-lg">Recent Content History</h3>
+                                </div>
+                                <span className="text-[10px] font-bold text-ash uppercase tracking-widest">Last 10 Scans</span>
+                            </div>
+
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left">
+                                    <tbody className="divide-y divide-silver/40">
+                                        {recentScans.length === 0 ? (
+                                            <tr>
+                                                <td className="p-12 text-center text-ash font-medium text-sm">No recent scans detected. Start scanning to build history.</td>
+                                            </tr>
+                                        ) : recentScans.map((scan, i) => (
+                                            <motion.tr
+                                                key={scan.id}
+                                                initial={{ opacity: 0, x: -10 }}
+                                                animate={{ opacity: 1, x: 0 }}
+                                                transition={{ delay: i * 0.05 }}
+                                                className="hover:bg-surface/50 group transition-colors"
                                             >
-                                                {copiedId === k.id ? (
-                                                    <svg className="w-4 h-4 text-score-human" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                                    </svg>
-                                                ) : (
-                                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                                    </svg>
-                                                )}
-                                            </motion.button>
-                                        </div>
-                                    </td>
-                                    <td className="p-5 text-ash text-sm font-medium">
-                                        {new Date(k.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                    </td>
-                                    <td className="p-5 text-right">
-                                        <motion.button
-                                            whileHover={{ scale: 1.05 }}
-                                            whileTap={{ scale: 0.95 }}
-                                            onClick={() => handleRevokeKey(k.id)}
-                                            className="text-score-ai font-bold text-xs tracking-wide hover:text-red-700 opacity-40 group-hover:opacity-100 transition-all bg-score-ai/5 px-3 py-1.5 rounded-lg border border-score-ai/10"
-                                        >
-                                            REVOKE
-                                        </motion.button>
-                                    </td>
-                                </motion.tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </motion.div>
+                                                <td className="p-5">
+                                                    <div className="flex items-center gap-4">
+                                                        <div className="w-10 h-10 rounded-xl bg-surface flex items-center justify-center text-ash group-hover:text-accent-blue transition-colors">
+                                                            {scan.type === 'DOCUMENT' ? <FileText className="w-4 h-4" /> : <div className="text-[10px] font-black">TX</div>}
+                                                        </div>
+                                                        <div>
+                                                            <p className="font-bold text-sm text-navy">{scan.type === 'DOCUMENT' ? 'Document Analysis' : 'Text Scan'}</p>
+                                                            <p className="text-xs text-ash font-medium">{new Date(scan.createdAt).toLocaleDateString()} at {new Date(scan.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="p-5 text-right">
+                                                    <span className="text-xs font-bold text-ash uppercase tracking-widest mr-3">COST</span>
+                                                    <span className="font-mono font-bold text-navy">-{scan.pointsCost} <span className="text-[10px] text-ash">PTS</span></span>
+                                                </td>
+                                            </motion.tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        {/* API Key Management */}
+                        <div className="glass-card rounded-[32px] p-1 overflow-hidden">
+                            <div className="p-8 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
+                                <div>
+                                    <div className="flex items-center gap-3 mb-1">
+                                        <Key className="w-5 h-5 text-accent-purple" />
+                                        <h3 className="font-black text-xl">Developer Access</h3>
+                                    </div>
+                                    <p className="text-sm text-ash font-medium">Use Jotril V2 programmatically in your own apps.</p>
+                                </div>
+                                <motion.button
+                                    whileHover={{ scale: 1.03 }}
+                                    whileTap={{ scale: 0.97 }}
+                                    onClick={handleCreateKey}
+                                    disabled={isGenerating}
+                                    className="px-6 py-3 bg-accent-blue text-white rounded-xl font-bold shadow-xl text-sm disabled:opacity-50"
+                                >
+                                    {isGenerating ? "Generating..." : "+ New Secret Key"}
+                                </motion.button>
+                            </div>
+
+                            <div className="px-1 pb-1">
+                                <div className="bg-surface/30 rounded-[28px] overflow-hidden">
+                                    <table className="w-full text-left border-collapse">
+                                        <thead className="text-[10px] font-bold text-ash uppercase tracking-[0.2em] border-b border-silver/50">
+                                            <tr>
+                                                <th className="p-6">Key Token</th>
+                                                <th className="p-6">Created</th>
+                                                <th className="p-6 text-right">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-silver/30">
+                                            {keys.length === 0 ? (
+                                                <tr><td colSpan="3" className="p-10 text-center text-ash text-sm font-medium">No active keys. Generate one to start building.</td></tr>
+                                            ) : keys.map((k) => (
+                                                <tr key={k.id} className="hover:bg-white/40 transition-colors group">
+                                                    <td className="p-6">
+                                                        <div className="flex items-center gap-2">
+                                                            <code className="font-mono text-sm text-navy font-bold tracking-widest">{k.key}</code>
+                                                            <button onClick={() => handleCopyKey(k.key, k.id)} className="text-ash hover:text-accent-blue transition-colors">
+                                                                {copiedId === k.id ? <Check className="w-4 h-4 text-score-human" /> : <Copy className="w-4 h-4" />}
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-6 text-xs text-ash font-bold">{new Date(k.createdAt).toLocaleDateString()}</td>
+                                                    <td className="p-6 text-right">
+                                                        <button onClick={() => handleRevokeKey(k.id)} className="text-ash hover:text-score-ai transition-colors p-2">
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    {/* RIGHT COLUMN: Tier & Current Quota */}
+                    <div className="lg:col-span-4 space-y-8">
+
+                        {/* Current Plan Card */}
+                        <div className="relative glow-border rounded-[32px] overflow-hidden">
+                            <div className={`bg-gradient-to-br ${gradient} p-8 text-white relative h-full flex flex-col`}>
+                                <div className="absolute top-0 right-0 p-8 opacity-20 transform translate-x-4 -translate-y-4">
+                                    <Zap className="w-32 h-32" />
+                                </div>
+                                <div className="relative z-10 flex-grow">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80">Subscription Status</p>
+                                    </div>
+                                    <h2 className="text-5xl font-black tracking-tighter mb-4">{tier}</h2>
+                                    <p className="text-white/70 text-sm font-medium leading-relaxed mb-10">
+                                        {tier === 'FREE' ? 'Upgrade to Pro for deep document analysis and high-volume scanning.' :
+                                            tier === 'PRO' ? 'Professional scan volume with advanced detection layers.' :
+                                                tier === 'ADMIN' ? 'Full system authority with prioritized engine access.' : 'Maximum capacity unlocked.'}
+                                    </p>
+                                </div>
+
+                                <div className="relative z-10 space-y-4">
+                                    <div className="flex justify-between items-end mb-2">
+                                        <p className="text-xs font-bold uppercase tracking-widest opacity-80">Daily Progress</p>
+                                        <p className="text-sm font-black tabular-nums">{tier === 'ADMIN' ? '∞' : `${spentPoints}/${quotaMax}`}</p>
+                                    </div>
+                                    <div className="w-full bg-white/20 rounded-full h-2.5 overflow-hidden">
+                                        <motion.div
+                                            initial={{ width: 0 }}
+                                            animate={{ width: `${tier === 'ADMIN' ? 0 : fillRatio}%` }}
+                                            className="h-full bg-white shadow-[0_0_15px_white]"
+                                        />
+                                    </div>
+                                    <p className="text-[10px] font-bold opacity-60 italic">Refreshing daily at 00:00 UTC</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Upgrade CTA / Extra Info */}
+                        {tier === 'FREE' && (
+                            <div className="glass-card rounded-[32px] p-8 space-y-6">
+                                <h4 className="font-black text-xl">Unlock Ultra Precision</h4>
+                                <ul className="space-y-4">
+                                    {[
+                                        { t: "Deep Doc Scan", d: "Scan PDFs and Word documents" },
+                                        { t: "High Quota", d: "5000 scans per day" },
+                                        { t: "API Access", d: "Build using the Jotril engine" }
+                                    ].map(item => (
+                                        <li key={item.t} className="flex items-start gap-3">
+                                            <div className="p-1 bg-accent-blue/10 rounded mt-0.5 text-accent-blue"><Check className="w-3 h-3" /></div>
+                                            <div>
+                                                <p className="text-sm font-bold text-navy leading-none mb-1">{item.t}</p>
+                                                <p className="text-xs text-ash font-medium">{item.d}</p>
+                                            </div>
+                                        </li>
+                                    ))}
+                                </ul>
+                                <motion.button
+                                    whileHover={{ scale: 1.02, y: -2 }}
+                                    className="w-full py-4 bg-navy text-white font-black rounded-2xl shadow-xl text-sm"
+                                >
+                                    View Pricing Plans
+                                </motion.button>
+                            </div>
+                        )}
+
+                        {/* Support Card */}
+                        <div className="glass-card rounded-[32px] p-8 border-dashed border-2">
+                            <h4 className="font-black text-lg mb-2">Need help?</h4>
+                            <p className="text-sm text-ash font-medium mb-6">Our response window for {tier === 'FREE' ? 'Free' : 'priority'} support is currently 2 hours.</p>
+                            <a href="mailto:support@jotril.ai" className="text-accent-blue font-bold text-sm hover:underline flex items-center gap-2">
+                                Contact Support
+                                <ArrowUpRight className="w-3 h-3" />
+                            </a>
+                        </div>
+
+                    </div>
+                </div>
             </div>
+
+            <style jsx global>{`
+                .num-rise { animation: rise 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+                @keyframes rise {
+                    from { opacity: 0; transform: translateY(10px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+            `}</style>
         </div>
     );
+}
+
+function Sparkles(props) {
+    return (
+        <svg
+            {...props}
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+            <path d="M5 3v4" />
+            <path d="M19 17v4" />
+            <path d="M3 5h4" />
+            <path d="M17 19h4" />
+        </svg>
+    )
 }

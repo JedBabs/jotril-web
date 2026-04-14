@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import ThemeSwitcher from "./ThemeSwitcher";
+import GlitchLogo from "./GlitchLogo";
 
 const navLinks = [
     { label: "How It Works", href: "#how-it-works" },
@@ -99,40 +100,6 @@ function MagneticButton({ href, children, className, style, onClick }) {
     );
 }
 
-function GlitchLogo() {
-    return (
-        <a href="#" className="group relative flex items-center gap-0.5 select-none">
-            <span
-                className="relative text-[22px] font-black tracking-tight glitch-text"
-                data-text="Jotril"
-                style={{ color: "var(--dyn-text-navy)", transition: "color 0.2s" }}
-            >
-                Jotril
-            </span>
-            <span
-                className="text-[22px] font-black tracking-tight"
-                style={{ color: "var(--dyn-accent-blue)" }}
-            >
-                AI
-            </span>
-            <span
-                className="text-[26px] font-black leading-none"
-                style={{ color: "var(--dyn-accent-blue)" }}
-            >
-                .
-            </span>
-            {/* Glow pulse on hover */}
-            <span
-                className="absolute inset-0 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-400"
-                style={{
-                    background: "radial-gradient(ellipse at 50% 50%, var(--dyn-glow-color) 0%, transparent 70%)",
-                    pointerEvents: "none",
-                }}
-            />
-        </a>
-    );
-}
-
 export default function Navbar({ session, onSignOut }) {
     const [scrolled, setScrolled] = useState(false);
     const [mobileOpen, setMobileOpen] = useState(false);
@@ -154,8 +121,8 @@ export default function Navbar({ session, onSignOut }) {
             animate={{ y: 0, opacity: 1 }}
             transition={{ duration: 0.5, ease: [0.34, 1.56, 0.64, 1] }}
             className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 noise-overlay ${scrolled
-                    ? "border-b"
-                    : "border-b border-transparent"
+                ? "border-b"
+                : "border-b border-transparent"
                 }`}
             style={
                 scrolled

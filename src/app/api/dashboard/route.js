@@ -44,6 +44,22 @@ export async function GET(req) {
             select: { role: true, purchasedPoints: true, email: true, name: true, createdAt: true }
         });
 
+        // Recent activity
+        const recentScans = await prisma.quotaUsage.findMany({
+            where: {
+                OR: [{ userId }]
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+            select: {
+                id: true,
+                type: true,
+                pointsCost: true,
+                createdAt: true,
+                size: true
+            }
+        });
+
         return NextResponse.json({
             totalRequests,
             totalPointsSpent: totalPoints._sum.pointsCost || 0,
@@ -53,6 +69,7 @@ export async function GET(req) {
             email: user?.email,
             name: user?.name,
             memberSince: user?.createdAt,
+            recentScans
         });
     } catch (error) {
         console.error('[Dashboard] Error:', error);
