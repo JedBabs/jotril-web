@@ -1,0 +1,103 @@
+import NextAuth from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
+import getPrisma from "@/lib/prisma";
+import bcrypt from "bcrypt";
+import { checkBruteForce, recordFailedLogin, clearBruteForce } from "@/lib/auth-security";
+
+export const authOptions = {
+    pages: {
+        signIn: '/auth/signin',
+    },
+    providers: [
+        CredentialsProvider({
+            name: "Credentials",
+            credentials: {
+                email: { label: "Email", type: "text" },
+                password: { label: "Password", type: "password" }
+            },
+            async authorize(credentials, req) {
+                if (!credentials?.email || !credentials?.password) {
+                    throw new Error(JSON.stringify({ message: "Email and password are required" }));
+                }
+
+                const email = credentials.email.toLowerCase();
+
+                // 1. Check brute force status
+                const bruteStatus = await checkBruteForce(email);
+                if (!bruteStatus.allowed) {
+                    const unlockTime = new Date(bruteStatus.lockedUntil).toLocaleTimeString();
+                    throw new Error(JSON.stringify({ 
+                        message: `Account temporarily locked due to too many failed attempts. Try again after ${unlockTime}.` 
+                    }));
+                }
+
+                // 2. Find User
+                const prisma = getPrisma();
+                const user = await prisma.user.findUnique({
+                    where: { email }
+                });
+
+                if (!user || !user.password) {
+                    // Record failed attempt even if user doesn't exist (prevents user enumeration)
+                    const newStatus = await recordFailedLogin(email);
+                    throw new Error(JSON.stringify({ 
+                        message: `Invalid credentials. ${newStatus.remainingTries} tries left.` 
+                    }));
+                }
+
+                // 3. Verify Password
+                const isValidPassword = await bcrypt.compare(credentials.password, user.password);
+                
+                if (!isValidPassword) {
+                    const newStatus = await recordFailedLogin(email);
+                    if (!newStatus.allowed) {
+                        throw new Error(JSON.stringify({ 
+                            message: `Account locked. Too many failed attempts.` 
+                        }));
+                    }
+                    throw new Error(JSON.stringify({ 
+                        message: `Invalid credentials. ${newStatus.remainingTries} tries left.` 
+                    }));
+                }
+
+                // 4. Success! Clear brute force record
+                await clearBruteForce(email);
+
+                return { 
+                    id: user.id, 
+                    name: user.name, 
+                    email: user.email, 
+                    role: user.role 
+                };
+            }
+        })
+    ],
+    session: {
+        strategy: "jwt",
+        maxAge: 30 * 24 * 60 * 60, // 30 days
+    },
+    callbacks: {
+        async jwt({ token, user, trigger, session }) {
+            if (user) {
+                token.role = user.role;
+                token.id = user.id;
+            }
+            // Allow manual role updates (e.g. from admin panel modifying sessions)
+            if (trigger === "update" && session?.role) {
+                token.role = session.role;
+            }
+            return token;
+        },
+        async session({ session, token }) {
+            if (session.user) {
+                session.user.role = token.role;
+                session.user.id = token.id;
+            }
+            return session;
+        }
+    }
+};
+
+const handler = NextAuth(authOptions);
+
+export { handler as GET, handler as POST };

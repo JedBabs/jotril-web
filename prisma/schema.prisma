@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String?  // Optional for future-proofing OAuth, required for credentials
+  name      String?
+  role      String   @default("FREE") // Values: FREE, PRO, ULTRA, ADMIN
+  purchasedPoints  Int  @default(0)    // Bought points that never expire
+  apiKeys   ApiKey[]
+  resetTokens PasswordResetToken[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ApiKey {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AnalysisRequest {
+  id          String   @id @default(uuid())
+  hash        String   // Hardware Fingerprint Hash for rate limiting
+  textLength  Int
+  isPro       Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([hash])
+}
+
+model AccountLockout {
+  id             String   @id @default(uuid())
+  identifier     String   @unique // Email or IP Address
+  failedAttempts Int      @default(0)
+  lockedUntil    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  @@index([identifier])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+}
+
+model QuotaUsage {
+  id            String   @id @default(uuid())
+  userId        String?  // Null for unauthenticated users
+  hash          String?  // Hardware footprint hash
+  type          String   // 'TEXT' or 'DOCUMENT'
+  size          Int      // Characters or Bytes
+  pointsCost    Int      @default(0)  // Points consumed by this action
+  sentenceCount Int      @default(0)  // Number of sentences processed
+  textHash      String?  // SHA-256 of input text for result caching
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([hash])
+  @@index([createdAt])
+  @@index([textHash])
+}
