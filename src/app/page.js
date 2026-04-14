@@ -12,6 +12,7 @@ import QuotaBar from "@/components/QuotaBar";
 import SignUpNudge from "@/components/SignUpNudge";
 import InteractiveBackground from "@/components/InteractiveBackground";
 import { generateHardwareVector } from "@/lib/fingerprint";
+import { generatePDFReport } from "@/lib/pdf-generator";
 
 // ─── FAQ data ───────────────────────────────────────────────
 const faqs = [
@@ -199,6 +200,7 @@ export default function Home() {
     const [coldStart, setColdStart] = useState(false);
     const [deviceHash, setDeviceHash] = useState(null);
     const [lastText, setLastText] = useState("");
+    const [scannedFile, setScannedFile] = useState(null);
     const [openFaq, setOpenFaq] = useState(null);
     const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
     const { data: session } = useSession();
@@ -234,6 +236,7 @@ export default function Home() {
         setIsAnalyzing(true);
         setResults(null);
         setColdStart(false);
+        setScannedFile(file);
         setLastText(text || file?.name || "");
 
         try {
@@ -598,21 +601,45 @@ export default function Home() {
                                         Scan Complete
                                     </p>
                                     <h2 className="text-2xl font-black tracking-tight mt-1" style={{ color: "var(--dyn-text-navy)" }}>
-                                        Analysis Results
+                                        Results Analysis
                                     </h2>
                                 </div>
-                                <motion.button
-                                    whileHover={{ scale: 1.04 }}
-                                    whileTap={{ scale: 0.96 }}
-                                    onClick={() => setResults(null)}
-                                    className="btn-shimmer font-bold text-sm py-2.5 px-7 rounded-full text-white"
-                                    style={{
-                                        background: "linear-gradient(135deg, var(--dyn-text-navy), var(--dyn-navy-light))",
-                                        boxShadow: "0 2px 12px rgba(10,22,40,0.18)",
-                                    }}
-                                >
-                                    Scan Another
-                                </motion.button>
+
+                                <div className="flex gap-3">
+                                    {scannedFile && (
+                                        <motion.button
+                                            whileHover={{ scale: 1.03, y: -2 }}
+                                            whileTap={{ scale: 0.98 }}
+                                            onClick={() => generatePDFReport({
+                                                filename: scannedFile.name,
+                                                breakdown,
+                                                overallLabel,
+                                                chunks: results,
+                                                sentenceCount: results.length,
+                                                wordCount
+                                            })}
+                                            className="flex items-center gap-2 px-6 py-2.5 rounded-full font-bold text-sm text-white shadow-lg transition-all"
+                                            style={{
+                                                background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple))",
+                                            }}
+                                        >
+                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                            </svg>
+                                            Download PDF Report
+                                        </motion.button>
+                                    )}
+
+                                    <motion.button
+                                        whileHover={{ scale: 1.03 }}
+                                        whileTap={{ scale: 0.98 }}
+                                        onClick={() => setResults(null)}
+                                        className="px-6 py-2.5 rounded-full font-bold text-sm bg-silver/30 hover:bg-silver/50 transition-colors"
+                                        style={{ color: "var(--dyn-text-navy)" }}
+                                    >
+                                        New Scan
+                                    </motion.button>
+                                </div>
                             </div>
 
                             <ScoreGauge breakdown={breakdown} overallLabel={overallLabel} sentenceCount={results.length} wordCount={wordCount} />
