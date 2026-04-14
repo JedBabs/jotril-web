@@ -49,7 +49,7 @@ function getAuthHeaders(includeContentType = false) {
  * Detects if an error response indicates the space is cold-starting.
  */
 function isColdStartError(text) {
-    const markers = ['currently loading', 'Building', 'is starting', 'is booting'];
+    const markers = ['currently loading', 'building', 'is starting', 'is booting', 'sleeping', 'paused', 'starting'];
     return markers.some(m => text.toLowerCase().includes(m.toLowerCase()));
 }
 

@@ -81,8 +81,8 @@ export async function POST(req) {
         // Batch-query the model
         const results = await batchQueryModel(
             scenarios.map(s => s.text),
-            50,
-            50
+            5,
+            500
         );
 
         // Convert model results to 0-100 scores with confidence penalty for short fragments
