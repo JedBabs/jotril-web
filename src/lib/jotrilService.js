@@ -159,19 +159,13 @@ export async function queryJotrilModel(text) {
                 submitTimeout.clear();
             }
 
-            if (!submitRes.ok) {
-                const errText = await submitRes.text();
+            // Check if the response is JSON
+            const contentType = submitRes.headers.get('content-type') || '';
+            const rawBody = await submitRes.text();
 
-                // 503 can mean cold-start OR crashed space — distinguish them
-                if (submitRes.status === 503) {
-                    // Crashed/errored space — don't retry, it won't recover on its own
-                    if (errText.toLowerCase().includes('in error') || errText.toLowerCase().includes('check its status')) {
-                        throw new JotrilServiceError(
-                            'The Jotril V2 space has encountered an error and needs to be restarted on HuggingFace. Please visit https://huggingface.co/spaces/JedBabs/Jotril-V2 to check its status.',
-                            'MODEL_ERROR'
-                        );
-                    }
-                    // Genuine cold start — space is loading/building
+            if (!submitRes.ok || !contentType.includes('application/json')) {
+                // Cold start detection from response body or generic error
+                if (isColdStartError(rawBody) || submitRes.status === 503 || submitRes.status === 504) {
                     throw new JotrilServiceError(
                         'The Jotril V2 engine is warming up. This takes about 30-60 seconds on the first request.',
                         'COLD_START',
@@ -179,19 +173,10 @@ export async function queryJotrilModel(text) {
                     );
                 }
 
-                // Cold start detection from response body (non-503 status)
-                if (isColdStartError(errText)) {
-                    throw new JotrilServiceError(
-                        'The Jotril V2 engine is warming up. This takes about 30-60 seconds on the first request.',
-                        'COLD_START',
-                        30
-                    );
-                }
-
-                // Auth errors — don't retry these
+                // Auth errors
                 if (submitRes.status === 401 || submitRes.status === 403) {
                     throw new JotrilServiceError(
-                        `Authentication failed (${submitRes.status}). Check that your HF_TOKEN is valid and has access to the JedBabs/Jotril-V2 space.`,
+                        `Authentication failed (${submitRes.status}). Check that your HF_TOKEN is valid.`,
                         'AUTH_ERROR'
                     );
                 }
@@ -199,19 +184,29 @@ export async function queryJotrilModel(text) {
                 // Rate limiting
                 if (submitRes.status === 429) {
                     throw new JotrilServiceError(
-                        'Rate limited by HuggingFace. Please wait a moment and try again.',
+                        'Rate limited by HuggingFace. Please wait a moment.',
                         'RATE_LIMITED',
                         10
                     );
                 }
 
                 throw new JotrilServiceError(
-                    `Gradio submit failed (${submitRes.status}): ${errText.substring(0, 150)}`,
+                    `Gradio submit failed (${submitRes.status}). The engine may be offline or sleeping.`,
                     'MODEL_ERROR'
                 );
             }
 
-            const { event_id } = await submitRes.json();
+            let event_id;
+            try {
+                const json = JSON.parse(rawBody);
+                event_id = json.event_id;
+            } catch (e) {
+                throw new JotrilServiceError('Failed to parse Gradio response as JSON', 'MODEL_ERROR');
+            }
+
+            if (!event_id) {
+                throw new JotrilServiceError('No event_id returned from Gradio', 'MODEL_ERROR');
+            }
 
             // Step 2: Fetch the result via SSE stream
             const resultTimeout = createTimeoutController(REQUEST_TIMEOUT_MS);
