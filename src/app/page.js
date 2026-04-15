@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSession, signOut } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, useMotionValue, useSpring } from "framer-motion";
 import Navbar from "@/components/Navbar";
 import FileUploader from "@/components/FileUploader";
@@ -13,7 +12,6 @@ import QuotaBar from "@/components/QuotaBar";
 import SignUpNudge from "@/components/SignUpNudge";
 import InteractiveBackground from "@/components/InteractiveBackground";
 import { generateHardwareVector } from "@/lib/fingerprint";
-import { generatePDFReport } from "@/lib/pdf-generator";
 
 // ─── FAQ data ───────────────────────────────────────────────
 const faqs = [
@@ -193,7 +191,14 @@ function CountUp({ to, suffix = "" }) {
 }
 
 // ─── Main Page ────────────────────────────────────────────────
+const heroWords = ["Detect", "AI-Generated", "Text"];
+
 export default function Home() {
+    const [mounted, setMounted] = useState(false);
+    useEffect(() => {
+        setMounted(true);
+    }, []);
+
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [results, setResults] = useState(null);
     const [breakdown, setBreakdown] = useState(null);
@@ -204,19 +209,7 @@ export default function Home() {
     const [scannedFile, setScannedFile] = useState(null);
     const [openFaq, setOpenFaq] = useState(null);
     const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
-    const { data: session, status, update } = useSession();
-    const router = useRouter();
-
-    // 1. Redirect to dashboard if logged in
-    // 2. Sync session role if database role has changed
-    useEffect(() => {
-        if (status === 'authenticated') {
-            if (session?.user?.role && stats?.tier && session.user.role !== stats.tier) {
-                update({ role: stats.tier });
-            }
-            router.push('/dashboard');
-        }
-    }, [status, router, session, stats, update]);
+    const { data: session } = useSession();
 
     // Mouse parallax for hero orbs
     const mouseX = useMotionValue(0);
@@ -623,14 +616,17 @@ export default function Home() {
                                         <motion.button
                                             whileHover={{ scale: 1.03, y: -2 }}
                                             whileTap={{ scale: 0.98 }}
-                                            onClick={() => generatePDFReport({
-                                                filename: scannedFile.name,
-                                                breakdown,
-                                                overallLabel,
-                                                chunks: results,
-                                                sentenceCount: results.length,
-                                                wordCount
-                                            })}
+                                            onClick={async () => {
+                                                const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
+                                                libGen({
+                                                    filename: scannedFile.name,
+                                                    breakdown,
+                                                    overallLabel,
+                                                    chunks: results,
+                                                    sentenceCount: results.length,
+                                                    wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0)
+                                                });
+                                            }}
                                             className="flex items-center gap-2 px-6 py-2.5 rounded-full font-bold text-sm text-white shadow-lg transition-all"
                                             style={{
                                                 background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple))",
@@ -655,7 +651,7 @@ export default function Home() {
                                 </div>
                             </div>
 
-                            <ScoreGauge breakdown={breakdown} overallLabel={overallLabel} sentenceCount={results.length} wordCount={wordCount} />
+                            <ScoreGauge breakdown={breakdown} overallLabel={overallLabel} sentenceCount={results.length} wordCount={results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0)} />
                             <HeatmapViewer chunks={results} />
 
                             {!isLoggedIn && <SignUpNudge variant="guest" />}

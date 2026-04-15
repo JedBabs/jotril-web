@@ -112,6 +112,11 @@ export default function Navbar({ session, onSignOut }) {
         return () => window.removeEventListener("scroll", handleScroll);
     }, []);
 
+    const isLoggedIn = !!session?.user;
+    const userRole = session?.user?.role || "FREE";
+    const userEmail = session?.user?.email || "";
+    const tc = tierColors[userRole] || tierColors.FREE;
+
     // Universal session role sync
     useEffect(() => {
         if (isLoggedIn) {
@@ -126,10 +131,7 @@ export default function Navbar({ session, onSignOut }) {
         }
     }, [isLoggedIn, update, session]);
 
-    const isLoggedIn = !!session?.user;
-    const userRole = session?.user?.role || "FREE";
-    const userEmail = session?.user?.email || "";
-    const tc = tierColors[userRole] || tierColors.FREE;
+
 
     return (
         <motion.nav

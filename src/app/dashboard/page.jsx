@@ -29,7 +29,6 @@ import ScoreGauge from "@/components/ScoreGauge";
 import ColdStartOverlay from "@/components/ColdStartOverlay";
 import ToastContainer, { showToast } from "@/components/Toast";
 import { generateHardwareVector } from "@/lib/fingerprint";
-import { generatePDFReport } from "@/lib/pdf-generator";
 
 const tierGradients = {
     FREE: "from-accent-blue to-accent-cyan",
@@ -333,7 +332,17 @@ export default function EnhancedAccountPortal() {
                                             <div className="flex gap-3">
                                                 {scannedFile && (
                                                     <button
-                                                        onClick={() => generatePDFReport({ filename: scannedFile.name, breakdown, overallLabel, chunks: results, sentenceCount: results.length, wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0) })}
+                                                        onClick={async () => {
+                                                            const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
+                                                            libGen({
+                                                                filename: scannedFile.name,
+                                                                breakdown,
+                                                                overallLabel,
+                                                                chunks: results,
+                                                                sentenceCount: results.length,
+                                                                wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0)
+                                                            });
+                                                        }}
                                                         className="px-5 py-2.5 bg-gradient-to-tr from-accent-blue to-accent-purple text-white rounded-xl font-bold text-xs shadow-lg"
                                                     >
                                                         Download PDF

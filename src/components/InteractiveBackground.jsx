@@ -2,10 +2,11 @@
 import { useEffect, useRef } from "react";
 import { useTheme } from "next-themes";
 
-function getThemeColors(theme) {
+// Helper moved inside or made safe
+function getThemeColors() {
+    if (typeof window === "undefined") return { base: "", accent1: "", accent2: "", accent3: "" };
     const root = document.documentElement;
     const style = getComputedStyle(root);
-    // Read the computed particle color from CSS variable
     const base = style.getPropertyValue("--dyn-particle-color").trim();
     const accent1 = style.getPropertyValue("--dyn-accent-blue").trim();
     const accent2 = style.getPropertyValue("--dyn-accent-purple").trim();
@@ -29,7 +30,7 @@ export default function InteractiveBackground() {
         canvas.height = height;
 
         // Read CSS vars for colors
-        const colors = getThemeColors(resolvedTheme);
+        const colors = getThemeColors();
 
         const PARTICLE_COUNT = 65;
         const CONNECT_DIST = 130;
