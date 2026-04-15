@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
-import { generateAnalysisScenarios, attributeScoresToSentences, calculateBurstinessNudge, contextualSmooth, classifyResults, splitIntoSentences } from '@/lib/chunking';
+import { generateAnalysisScenarios, attributeScoresToSentences, calculateBurstinessNudge, contextualSmooth, classifyResults, splitIntoSentences, getEngineConfig } from '@/lib/chunking';
 import { batchQueryModel, JotrilServiceError } from '@/lib/jotrilService';
 
 import { getServerSession } from 'next-auth';
@@ -100,22 +100,26 @@ export async function POST(req) {
             return score;
         });
 
+        // Fetch dynamic engine configuration from DB (cached)
+        const engineCfg = await getEngineConfig();
+
         // Calculate document-level burstiness correction
-        const burstinessNudge = calculateBurstinessNudge(docSentences);
+        const burstinessNudge = calculateBurstinessNudge(docSentences, engineCfg);
 
         // Map scores back to individual sentences using the 3-signal differential engine
         const rawChunks = attributeScoresToSentences(
             docSentences,
             scenarios,
             scores,
-            burstinessNudge
+            burstinessNudge,
+            engineCfg
         );
 
         // Apply contextual smoothing
-        const smoothedChunks = contextualSmooth(rawChunks);
+        const smoothedChunks = contextualSmooth(rawChunks, engineCfg);
 
         // Classify into human/mixed/ai
-        const { chunks: classifiedChunks, breakdown, overallLabel } = classifyResults(smoothedChunks);
+        const { chunks: classifiedChunks, breakdown, overallLabel } = classifyResults(smoothedChunks, engineCfg);
 
         return NextResponse.json({
             success: true,

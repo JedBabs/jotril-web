@@ -17,7 +17,11 @@ import {
     Copy,
     Check,
     Trash2,
-    Lock
+    Lock,
+    BookOpen,
+    ShieldAlert,
+    DownloadCloud,
+    Search
 } from 'lucide-react';
 import GlitchLogo from "@/components/GlitchLogo";
 import SignUpNudge from "@/components/SignUpNudge";
@@ -41,11 +45,8 @@ export default function EnhancedAccountPortal() {
     const { data: session, status, update } = useSession();
     const router = useRouter();
 
-    const [keys, setKeys] = useState([]);
-    const [isGenerating, setIsGenerating] = useState(false);
     const [stats, setStats] = useState(null);
     const [isDataLoaded, setIsDataLoaded] = useState(false);
-    const [copiedId, setCopiedId] = useState(null);
     const [devMode, setDevMode] = useState(false);
 
     // Analysis State
@@ -80,14 +81,9 @@ export default function EnhancedAccountPortal() {
         if (status === 'authenticated') {
             const fetchData = async () => {
                 try {
-                    const [keysRes, dashRes] = await Promise.all([
-                        fetch('/api/keys'),
-                        fetch('/api/dashboard')
-                    ]);
-                    const keysData = await keysRes.json();
+                    const dashRes = await fetch('/api/dashboard');
                     const dashData = await dashRes.json();
 
-                    if (keysData.keys) setKeys(keysData.keys);
                     if (!dashData.error) setStats(dashData);
                     setIsDataLoaded(true);
                 } catch (err) {
@@ -98,25 +94,7 @@ export default function EnhancedAccountPortal() {
         }
     }, [status]);
 
-    const handleCreateKey = async () => {
-        setIsGenerating(true);
-        const res = await fetch('/api/keys', { method: 'POST' });
-        const data = await res.json();
-        if (data.key) setKeys([...keys, data.key]);
-        setIsGenerating(false);
-    };
-
-    const handleRevokeKey = async (id) => {
-        await fetch(`/api/keys?id=${id}`, { method: 'DELETE' });
-        setKeys(keys.filter(k => k.id !== id));
-    };
-
-    const handleCopyKey = (key, id) => {
-        navigator.clipboard.writeText(key);
-        setCopiedId(id);
-        setTimeout(() => setCopiedId(null), 2000);
-    };
-
+    // Removed inline key handlers; moved to specific subpage
     const handleAnalyze = async (text, file = null) => {
         if ((!text || text.trim() === "") && !file) {
             return showToast("Please enter text or upload a file first.", "warning");
@@ -449,62 +427,54 @@ export default function EnhancedAccountPortal() {
                             </div>
                         </div>
 
-                        {/* API Key Management */}
-                        <div className="glass-card rounded-[32px] p-1 overflow-hidden">
-                            <div className="p-8 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
-                                <div>
-                                    <div className="flex items-center gap-3 mb-1">
-                                        <Key className="w-5 h-5 text-accent-purple" />
-                                        <h3 className="font-black text-xl">Developer Access</h3>
-                                    </div>
-                                    <p className="text-sm text-ash font-medium">Use Jotril V2 programmatically in your own apps.</p>
+                        {/* Dashboard Sub-Pages Grid */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                            <motion.button
+                                whileHover={{ scale: 1.02, y: -2 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={() => router.push('/dashboard/api-keys')}
+                                className="glass-card rounded-[32px] p-8 text-left transition-all hover:bg-surface/50 group border border-transparent hover:border-accent-blue/30 relative overflow-hidden"
+                            >
+                                <div className="absolute -top-12 -right-12 w-32 h-32 bg-accent-blue/5 rounded-full blur-2xl group-hover:bg-accent-blue/10 transition-colors" />
+                                <div className="flex items-center gap-3 mb-4 text-accent-blue">
+                                    <div className="p-3 bg-accent-blue/10 rounded-2xl group-hover:scale-110 transition-transform"><Key className="w-6 h-6" /></div>
+                                    <h3 className="font-black text-xl text-navy">Developer API</h3>
                                 </div>
-                                <motion.button
-                                    whileHover={{ scale: 1.03 }}
-                                    whileTap={{ scale: 0.97 }}
-                                    onClick={handleCreateKey}
-                                    disabled={isGenerating}
-                                    className="px-6 py-3 bg-accent-blue text-white rounded-xl font-bold shadow-xl text-sm disabled:opacity-50"
-                                >
-                                    {isGenerating ? "Generating..." : "+ New Secret Key"}
-                                </motion.button>
-                            </div>
+                                <p className="text-sm text-ash font-medium leading-relaxed">Generate tokens to build AI apps powered by Jotril V2.</p>
+                                <div className="mt-8 flex items-center text-xs font-bold text-accent-blue uppercase tracking-widest group-hover:gap-2 transition-all">
+                                    Manage Keys <ArrowUpRight className="w-4 h-4 ml-1" />
+                                </div>
+                            </motion.button>
 
-                            <div className="px-1 pb-1">
-                                <div className="bg-surface/30 rounded-[28px] overflow-hidden">
-                                    <table className="w-full text-left border-collapse">
-                                        <thead className="text-[10px] font-bold text-ash uppercase tracking-[0.2em] border-b border-silver/50">
-                                            <tr>
-                                                <th className="p-6">Key Token</th>
-                                                <th className="p-6">Created</th>
-                                                <th className="p-6 text-right">Actions</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-silver/30">
-                                            {keys.length === 0 ? (
-                                                <tr><td colSpan="3" className="p-10 text-center text-ash text-sm font-medium">No active keys. Generate one to start building.</td></tr>
-                                            ) : keys.map((k) => (
-                                                <tr key={k.id} className="hover:bg-white/40 transition-colors group">
-                                                    <td className="p-6">
-                                                        <div className="flex items-center gap-2">
-                                                            <code className="font-mono text-sm text-navy font-bold tracking-widest">{k.key}</code>
-                                                            <button onClick={() => handleCopyKey(k.key, k.id)} className="text-ash hover:text-accent-blue transition-colors">
-                                                                {copiedId === k.id ? <Check className="w-4 h-4 text-score-human" /> : <Copy className="w-4 h-4" />}
-                                                            </button>
-                                                        </div>
-                                                    </td>
-                                                    <td className="p-6 text-xs text-ash font-bold">{new Date(k.createdAt).toLocaleDateString()}</td>
-                                                    <td className="p-6 text-right">
-                                                        <button onClick={() => handleRevokeKey(k.id)} className="text-ash hover:text-score-ai transition-colors p-2">
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
+                            <motion.button
+                                whileHover={{ scale: 1.02, y: -2 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={() => showToast("Exporting history...", "info")}
+                                className="glass-card rounded-[32px] p-8 text-left transition-all hover:bg-surface/50 group border border-transparent hover:border-accent-purple/30 relative overflow-hidden"
+                            >
+                                <div className="absolute -top-12 -right-12 w-32 h-32 bg-accent-purple/5 rounded-full blur-2xl group-hover:bg-accent-purple/10 transition-colors" />
+                                <div className="flex items-center gap-3 mb-4 text-accent-purple">
+                                    <div className="p-3 bg-accent-purple/10 rounded-2xl group-hover:scale-110 transition-transform"><DownloadCloud className="w-6 h-6" /></div>
+                                    <h3 className="font-black text-xl text-navy">Export Logs</h3>
                                 </div>
-                            </div>
+                                <p className="text-sm text-ash font-medium leading-relaxed">Download your full history as encrypted PDF or CSV files.</p>
+                                <div className="mt-8 flex items-center text-xs font-bold text-accent-purple uppercase tracking-widest group-hover:gap-2 transition-all">
+                                    Request Export <ArrowUpRight className="w-4 h-4 ml-1" />
+                                </div>
+                            </motion.button>
+
+                            <motion.div
+                                className="glass-card rounded-[32px] p-8 text-left relative overflow-hidden opacity-50 cursor-not-allowed hidden sm:block"
+                            >
+                                <div className="flex items-center gap-3 mb-4 text-ash">
+                                    <div className="p-3 bg-silver/30 rounded-2xl"><BookOpen className="w-6 h-6" /></div>
+                                    <h3 className="font-black text-xl text-navy">Technical Docs</h3>
+                                </div>
+                                <p className="text-sm text-ash font-medium leading-relaxed">Learn about our multi-scale detection methodology.</p>
+                                <div className="mt-8 flex items-center text-xs font-bold text-ash uppercase tracking-widest">
+                                    Coming Soon
+                                </div>
+                            </motion.div>
                         </div>
 
                         <QuotaBar deviceHash={deviceHash} refreshKey={quotaRefreshKey} session={session} />

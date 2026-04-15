@@ -241,22 +241,80 @@ export const SIGNAL_CONFIG = {
     anchor: { weight: 0.27 },
 
     // ── Per-window confidence (reflects model training distribution) ───
-    // Model trained on 25+ words:
-    //   1-sentence ≈ 10 words (well below), 2-sentence ≈ 25 words (boundary),
-    //   3-sentence ≈ 40 words (in-distribution), 4+ ≈ fully reliable
     windowConfidence: {
         'window-1': 0.15,
         'window-2': 0.50,
         'window-3': 0.85,
         'window-4': 0.95,
         'window-5': 0.98,
-        'leave-one-out': 0.99, // Perturbation slices retain almost maximum context length
+        'leave-one-out': 0.99,
         'paragraph': 1.00,
     },
 
     // Minimum confidence threshold for a window to count as an "anchor"
     anchorThreshold: 0.85,
 };
+
+// ── Dynamic Engine Config ────────────────────────────────────────────
+// Reads from the EngineConfig table (set via Admin Hub), merging with defaults.
+// Falls back gracefully to hardcoded SIGNAL_CONFIG if no DB row exists.
+let _cachedConfig = null;
+let _cacheTime = 0;
+const CACHE_TTL = 30_000; // 30-second cache to avoid hitting DB on every sentence
+
+export async function getEngineConfig() {
+    const now = Date.now();
+    if (_cachedConfig && (now - _cacheTime) < CACHE_TTL) return _cachedConfig;
+
+    try {
+        const getPrisma = (await import('@/lib/prisma')).default;
+        const prisma = getPrisma();
+        const row = await prisma.engineConfig.findUnique({ where: { id: 'global' } });
+        if (row?.data) {
+            const db = row.data;
+            _cachedConfig = {
+                direct: { weight: db.signalWeights?.direct ?? SIGNAL_CONFIG.direct.weight },
+                differential: { weight: db.signalWeights?.differential ?? SIGNAL_CONFIG.differential.weight },
+                anchor: { weight: db.signalWeights?.anchor ?? SIGNAL_CONFIG.anchor.weight },
+                windowConfidence: { ...SIGNAL_CONFIG.windowConfidence, ...(db.windowConfidence || {}) },
+                anchorThreshold: db.anchorThreshold ?? SIGNAL_CONFIG.anchorThreshold,
+                classification: {
+                    humanMax: db.classification?.humanMax ?? 62,
+                    mixedMax: db.classification?.mixedMax ?? 75,
+                },
+                smoothing: {
+                    maxNudge: db.smoothing?.maxNudge ?? 25,
+                },
+                burstiness: {
+                    lowThreshold: db.burstiness?.lowThreshold ?? 7,
+                    highThreshold: db.burstiness?.highThreshold ?? 12,
+                    lowNudge: db.burstiness?.lowNudge ?? 5,
+                    highNudge: db.burstiness?.highNudge ?? 10,
+                },
+            };
+            _cacheTime = now;
+            return _cachedConfig;
+        }
+    } catch (e) {
+        // DB unavailable — fall back to defaults silently
+    }
+
+    // Return hardcoded defaults
+    _cachedConfig = {
+        ...SIGNAL_CONFIG,
+        classification: { humanMax: 62, mixedMax: 75 },
+        smoothing: { maxNudge: 25 },
+        burstiness: { lowThreshold: 7, highThreshold: 12, lowNudge: 5, highNudge: 10 },
+    };
+    _cacheTime = now;
+    return _cachedConfig;
+}
+
+// Synchronous invalidation hook — called after admin saves new config
+export function invalidateEngineConfigCache() {
+    _cachedConfig = null;
+    _cacheTime = 0;
+}
 
 /**
  * ── Signal 1: Direct Confidence-Scaled Score ──────────────────────────
@@ -452,8 +510,8 @@ function computeAnchorSignal(windowHits) {
  * @param {number} burstinessNudge - Document-level burstiness adjustment (0-10)
  * @returns {Array<{text: string, score: number}>}
  */
-export function attributeScoresToSentences(sentences, scenarios, scores, burstinessNudge = 0) {
-    const cfg = SIGNAL_CONFIG;
+export function attributeScoresToSentences(sentences, scenarios, scores, burstinessNudge = 0, engineCfg = null) {
+    const cfg = engineCfg || SIGNAL_CONFIG;
 
     // Pre-apply burstiness nudge to all scores (mutates a copy, not the original)
     const adjustedScores = scores.map(s => {
@@ -527,8 +585,10 @@ export function attributeScoresToSentences(sentences, scenarios, scores, burstin
  * @param {string[]} sentences - Array of sentences
  * @returns {number} - Nudge value (0, 5, or 10) to subtract from high AI scores
  */
-export function calculateBurstinessNudge(sentences) {
+export function calculateBurstinessNudge(sentences, engineCfg = null) {
     if (sentences.length < 3) return 0;
+
+    const bc = engineCfg?.burstiness || { lowThreshold: 7, highThreshold: 12, lowNudge: 5, highNudge: 10 };
 
     const lengths = sentences.map(s => s.trim().split(/\s+/).length);
     const avg = lengths.reduce((a, b) => a + b, 0) / lengths.length;
@@ -537,8 +597,8 @@ export function calculateBurstinessNudge(sentences) {
     );
 
     // Human writing typically has higher variance in sentence length
-    if (stdDev > 12) return 10;
-    if (stdDev > 7) return 5;
+    if (stdDev > bc.highThreshold) return bc.highNudge;
+    if (stdDev > bc.lowThreshold) return bc.lowNudge;
     return 0;
 }
 
@@ -567,7 +627,7 @@ export function calculateBurstinessNudge(sentences) {
  * @param {Array<{text: string, score: number}>} chunks - Raw scored chunks
  * @returns {Array<{text: string, score: number}>} - Smoothed chunks
  */
-export function contextualSmooth(chunks) {
+export function contextualSmooth(chunks, engineCfg = null) {
     if (chunks.length < 3) return chunks;
 
     const WINDOW_SIZE = 3; // Look 3 sentences each direction
@@ -621,7 +681,7 @@ export function contextualSmooth(chunks) {
         } else {
             // Normal sentences: Only nudge if somewhat ambiguous AND neighbors have consensus
             // Max nudge: 25 points (when sentence is at 50 and all neighbors agree)
-            const maxNudge = 25;
+            const maxNudge = engineCfg?.smoothing?.maxNudge ?? 25;
             const nudgeAmount = maxNudge * ambiguity * consensusStrength;
 
             // Direction: pull toward neighbor consensus
@@ -657,10 +717,12 @@ export function contextualSmooth(chunks) {
  *   overallLabel: string
  * }}
  */
-export function classifyResults(chunks) {
+export function classifyResults(chunks, engineCfg = null) {
+    const hMax = engineCfg?.classification?.humanMax ?? 62;
+    const mMax = engineCfg?.classification?.mixedMax ?? 75;
     const classified = chunks.map(chunk => ({
         ...chunk,
-        label: chunk.score <= 62 ? 'human' : chunk.score <= 75 ? 'mixed' : 'ai'
+        label: chunk.score <= hMax ? 'human' : chunk.score <= mMax ? 'mixed' : 'ai'
     }));
 
     const total = classified.length || 1;

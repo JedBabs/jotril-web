@@ -78,3 +78,10 @@ model QuotaUsage {
   @@index([createdAt])
   @@index([textHash])
 }
+
+model EngineConfig {
+  id           String   @id @default("global")
+  data         Json     // Current active config
+  previousData Json?    // Snapshot before last change (for undo)
+  updatedAt    DateTime @updatedAt
+}

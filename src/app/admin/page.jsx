@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ShieldCheck, UserCog, Mail, Calendar, LogOut, CheckCircle, Plus } from 'lucide-react';
+import { ShieldCheck, UserCog, Mail, Calendar, LogOut, CheckCircle, Plus, Undo2, RotateCcw, ChevronDown, ChevronRight, Save } from 'lucide-react';
 import { useSession, signOut } from 'next-auth/react';
 import ToastContainer, { showToast } from '@/components/Toast';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,6 +18,7 @@ export default function AdminDashboardPage() {
     const { data: session, status } = useSession();
     const router = useRouter();
     const [users, setUsers] = useState([]);
+    const [stats, setStats] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [selectedUser, setSelectedUser] = useState(null);
     const [isTierModalOpen, setIsTierModalOpen] = useState(false);
@@ -37,6 +38,7 @@ export default function AdminDashboardPage() {
             if (!res.ok) throw new Error('Failed to fetch users');
             const data = await res.json();
             setUsers(data.users || []);
+            setStats(data.stats || null);
         } catch (err) {
             showToast('Unable to load users. Are you an admin?', 'error');
             router.push('/dashboard');
@@ -55,9 +57,8 @@ export default function AdminDashboardPage() {
             </div>
         );
     }
-
-    if (!session || session.user.role !== 'ADMIN') return null;
-
+    // Security check occurs at the API route level; if fetchUsers succeeds, they are admin.
+    if (!session) return null;
     const openTierModal = (user) => { setSelectedUser(user); setIsTierModalOpen(true); };
     const openPointsModal = (user) => { setSelectedUser(user); setIsPointsModalOpen(true); };
 
@@ -127,6 +128,46 @@ export default function AdminDashboardPage() {
                         </motion.button>
                     </div>
                 </motion.div>
+
+                {/* Platform Analytics Cards */}
+                {stats && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10"
+                    >
+                        <div className="glass-card !rounded-2xl p-6 relative overflow-hidden group">
+                            <h3 className="text-[10px] font-bold text-ash uppercase tracking-[0.15em] mb-2">Total Users</h3>
+                            <p className="text-3xl font-black text-navy">{stats.totalUsers.toLocaleString()}</p>
+                            <div className="mt-3 flex gap-2">
+                                <span className="text-[10px] font-bold text-ash px-2 py-0.5 rounded-full border border-silver">PRO: {stats.tierBreakdown?.PRO || 0}</span>
+                                <span className="text-[10px] font-bold text-accent-purple px-2 py-0.5 rounded-full border border-accent-purple/20 bg-accent-purple/5">ULT: {stats.tierBreakdown?.ULTRA || 0}</span>
+                            </div>
+                        </div>
+
+                        <div className="glass-card !rounded-2xl p-6 relative overflow-hidden group">
+                            <h3 className="text-[10px] font-bold text-ash uppercase tracking-[0.15em] mb-2">Scans Today</h3>
+                            <p className="text-3xl font-black text-navy">{stats.scansToday.toLocaleString()}</p>
+                            <p className="text-xs text-ash font-medium mt-3">All-time: {stats.scansAllTime.toLocaleString()}</p>
+                        </div>
+
+                        <div className="glass-card !rounded-2xl p-6 relative overflow-hidden group">
+                            <h3 className="text-[10px] font-bold text-ash uppercase tracking-[0.15em] mb-2">Points Burned (24h)</h3>
+                            <p className="text-3xl font-black text-score-human">{stats.pointsToday.toLocaleString()}</p>
+                            <p className="text-xs text-ash font-medium mt-3">All-time: {stats.pointsAllTime.toLocaleString()}</p>
+                        </div>
+
+                        <div className="glass-card !rounded-2xl p-6 bg-gradient-to-br from-navy to-navy/90 text-white relative overflow-hidden group flex flex-col justify-center items-center cursor-pointer hover:shadow-xl transition-shadow" onClick={() => document.getElementById('engine-tuning')?.scrollIntoView({ behavior: 'smooth' })}>
+                            <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center mb-2">
+                                <svg className="w-5 h-5 text-accent-cyan" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                </svg>
+                            </div>
+                            <span className="text-sm font-bold tracking-widest uppercase text-accent-cyan group-hover:text-white transition-colors">Tune Engine</span>
+                        </div>
+                    </motion.div>
+                )}
 
                 {/* Users Table */}
                 <motion.div
@@ -221,6 +262,9 @@ export default function AdminDashboardPage() {
                         </table>
                     </div>
                 </motion.div>
+
+                {/* ═══ Engine Tuning Panel ═══ */}
+                <EngineTuningPanel />
 
                 {/* Change Tier Modal */}
                 <AnimatePresence>
@@ -318,6 +362,248 @@ function PointsModal({ user, onClose, onAdd }) {
                     </motion.button>
                 </div>
             </motion.div>
+        </motion.div>
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ENGINE TUNING PANEL
+// ═══════════════════════════════════════════════════════════════════════
+
+const DEFAULT_CONFIG = {
+    signalWeights: { direct: 0.30, differential: 0.43, anchor: 0.27 },
+    windowConfidence: { 'window-1': 0.15, 'window-2': 0.50, 'window-3': 0.85, 'window-4': 0.95, 'window-5': 0.98, 'leave-one-out': 0.99, 'paragraph': 1.00 },
+    anchorThreshold: 0.85,
+    classification: { humanMax: 62, mixedMax: 75 },
+    smoothing: { maxNudge: 25 },
+    burstiness: { lowThreshold: 7, highThreshold: 12, lowNudge: 5, highNudge: 10 }
+};
+
+function TuningSlider({ label, value, onChange, min, max, step = 0.01, unit = '' }) {
+    return (
+        <div className="flex flex-col gap-2">
+            <div className="flex justify-between items-center">
+                <span className="text-[11px] font-bold text-ash uppercase tracking-widest">{label}</span>
+                <span className="font-mono text-sm font-black text-navy">{typeof value === 'number' ? value.toFixed(step < 1 ? 2 : 0) : value}{unit}</span>
+            </div>
+            <div className="flex items-center gap-3">
+                <input
+                    type="range" min={min} max={max} step={step} value={value}
+                    onChange={(e) => onChange(parseFloat(e.target.value))}
+                    className="w-full h-1.5 appearance-none rounded-full bg-silver cursor-pointer accent-accent-blue"
+                />
+                <input
+                    type="number" min={min} max={max} step={step} value={value}
+                    onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+                    className="w-20 text-center font-mono text-xs border border-silver rounded-lg py-1.5 bg-white/50 focus:outline-none focus:border-accent-blue text-navy font-bold"
+                />
+            </div>
+        </div>
+    );
+}
+
+function CollapsibleSection({ title, children, defaultOpen = false }) {
+    const [open, setOpen] = useState(defaultOpen);
+    return (
+        <div className="border border-silver/50 rounded-2xl overflow-hidden">
+            <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between p-5 bg-surface/30 hover:bg-surface/50 transition-colors text-left">
+                <span className="font-black text-sm text-navy">{title}</span>
+                {open ? <ChevronDown className="w-4 h-4 text-ash" /> : <ChevronRight className="w-4 h-4 text-ash" />}
+            </button>
+            <AnimatePresence>
+                {open && (
+                    <motion.div
+                        initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="overflow-hidden"
+                    >
+                        <div className="p-5 space-y-5 border-t border-silver/30">
+                            {children}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </div>
+    );
+}
+
+function EngineTuningPanel() {
+    const [config, setConfig] = useState(null);
+    const [canUndo, setCanUndo] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const [isDirty, setIsDirty] = useState(false);
+
+    useEffect(() => {
+        fetch('/api/admin/config')
+            .then(r => r.json())
+            .then(data => {
+                setConfig(data.config || DEFAULT_CONFIG);
+                setCanUndo(data.canUndo || false);
+            })
+            .catch(() => setConfig(DEFAULT_CONFIG));
+    }, []);
+
+    if (!config) return null;
+
+    const updateField = (path, value) => {
+        setConfig(prev => {
+            const next = JSON.parse(JSON.stringify(prev));
+            const keys = path.split('.');
+            let obj = next;
+            for (let i = 0; i < keys.length - 1; i++) obj = obj[keys[i]];
+            obj[keys[keys.length - 1]] = value;
+            return next;
+        });
+        setIsDirty(true);
+    };
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            const res = await fetch('/api/admin/config', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast('Engine config saved!', 'success');
+                setCanUndo(data.canUndo);
+                setIsDirty(false);
+            } else {
+                showToast(data.error || 'Failed to save', 'error');
+            }
+        } catch {
+            showToast('Network error saving config', 'error');
+        }
+        setIsSaving(false);
+    };
+
+    const handleUndo = async () => {
+        try {
+            const res = await fetch('/api/admin/config', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                setConfig(data.config);
+                setCanUndo(data.canUndo);
+                setIsDirty(false);
+                showToast('Rolled back to previous config!', 'success');
+            } else {
+                showToast(data.error || 'Undo failed', 'error');
+            }
+        } catch {
+            showToast('Network error during undo', 'error');
+        }
+    };
+
+    const handleReset = () => {
+        setConfig(JSON.parse(JSON.stringify(DEFAULT_CONFIG)));
+        setIsDirty(true);
+        showToast('Reset to factory defaults (save to apply)', 'info');
+    };
+
+    // Calculate the normalized weight display
+    const totalW = (config.signalWeights?.direct || 0) + (config.signalWeights?.differential || 0) + (config.signalWeights?.anchor || 0);
+
+    return (
+        <motion.div
+            id="engine-tuning"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="mt-10"
+        >
+            <div className="glass-card rounded-[32px] overflow-hidden">
+                {/* Header */}
+                <div className="p-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 border-b border-silver/40">
+                    <div>
+                        <div className="flex items-center gap-3 mb-1">
+                            <div className="w-10 h-10 bg-gradient-to-br from-accent-blue to-accent-cyan rounded-xl flex items-center justify-center">
+                                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                </svg>
+                            </div>
+                            <h2 className="text-2xl font-black text-navy">Engine Tuning</h2>
+                        </div>
+                        <p className="text-sm text-ash font-medium">Fine-tune post-model signal processing, classification thresholds, and smoothing behavior.</p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                        {canUndo && (
+                            <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleUndo}
+                                className="flex items-center gap-2 text-xs font-bold text-ash hover:text-accent-purple glass-card !rounded-full px-4 py-2.5 transition-colors">
+                                <Undo2 className="w-3.5 h-3.5" /> Undo Last
+                            </motion.button>
+                        )}
+                        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleReset}
+                            className="flex items-center gap-2 text-xs font-bold text-ash hover:text-score-ai glass-card !rounded-full px-4 py-2.5 transition-colors">
+                            <RotateCcw className="w-3.5 h-3.5" /> Reset
+                        </motion.button>
+                        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleSave} disabled={!isDirty || isSaving}
+                            className="flex items-center gap-2 text-xs font-bold text-white bg-accent-blue hover:bg-accent-blue/90 disabled:opacity-40 !rounded-full px-5 py-2.5 shadow-lg transition-all">
+                            <Save className="w-3.5 h-3.5" /> {isSaving ? 'Saving...' : 'Save Config'}
+                        </motion.button>
+                    </div>
+                </div>
+
+                {/* Body */}
+                <div className="p-8 space-y-6">
+
+                    <CollapsibleSection title="Signal Blend Weights" defaultOpen={true}>
+                        <p className="text-[11px] text-ash mb-4 leading-relaxed">
+                            These weights control how much each analysis signal contributes to the final score.
+                            They are normalized automatically (sum: <span className="font-mono font-bold text-navy">{totalW.toFixed(2)}</span>).
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <TuningSlider label="Direct" value={config.signalWeights?.direct ?? 0.30} onChange={v => updateField('signalWeights.direct', v)} min={0} max={1} step={0.01} />
+                            <TuningSlider label="Differential" value={config.signalWeights?.differential ?? 0.43} onChange={v => updateField('signalWeights.differential', v)} min={0} max={1} step={0.01} />
+                            <TuningSlider label="Anchor" value={config.signalWeights?.anchor ?? 0.27} onChange={v => updateField('signalWeights.anchor', v)} min={0} max={1} step={0.01} />
+                        </div>
+                    </CollapsibleSection>
+
+                    <CollapsibleSection title="Window Confidence Matrix">
+                        <p className="text-[11px] text-ash mb-4 leading-relaxed">
+                            Each window type's confidence reflects how much we trust its score given the model's training data distribution.
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {Object.entries(config.windowConfidence || {}).map(([key, val]) => (
+                                <TuningSlider key={key} label={key} value={val} onChange={v => updateField(`windowConfidence.${key}`, v)} min={0} max={1} step={0.01} />
+                            ))}
+                        </div>
+                        <TuningSlider label="Anchor Threshold" value={config.anchorThreshold ?? 0.85} onChange={v => updateField('anchorThreshold', v)} min={0} max={1} step={0.01} />
+                    </CollapsibleSection>
+
+                    <CollapsibleSection title="Classification Boundaries">
+                        <p className="text-[11px] text-ash mb-4 leading-relaxed">
+                            Scores ≤ <b>Human Max</b> = Human, scores ≤ <b>Mixed Max</b> = Mixed, above = AI.
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <TuningSlider label="Human Max" value={config.classification?.humanMax ?? 62} onChange={v => updateField('classification.humanMax', v)} min={0} max={100} step={1} />
+                            <TuningSlider label="Mixed Max" value={config.classification?.mixedMax ?? 75} onChange={v => updateField('classification.mixedMax', v)} min={0} max={100} step={1} />
+                        </div>
+                    </CollapsibleSection>
+
+                    <CollapsibleSection title="Smoothing & Burstiness">
+                        <div className="space-y-6">
+                            <div>
+                                <h4 className="text-xs font-black text-navy mb-3 uppercase tracking-widest">Contextual Smoothing</h4>
+                                <TuningSlider label="Max Nudge" value={config.smoothing?.maxNudge ?? 25} onChange={v => updateField('smoothing.maxNudge', v)} min={0} max={50} step={1} unit=" pts" />
+                            </div>
+                            <hr className="border-silver/30" />
+                            <div>
+                                <h4 className="text-xs font-black text-navy mb-3 uppercase tracking-widest">Burstiness Detection</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <TuningSlider label="Low StdDev Threshold" value={config.burstiness?.lowThreshold ?? 7} onChange={v => updateField('burstiness.lowThreshold', v)} min={0} max={30} step={1} />
+                                    <TuningSlider label="High StdDev Threshold" value={config.burstiness?.highThreshold ?? 12} onChange={v => updateField('burstiness.highThreshold', v)} min={0} max={30} step={1} />
+                                    <TuningSlider label="Low Nudge" value={config.burstiness?.lowNudge ?? 5} onChange={v => updateField('burstiness.lowNudge', v)} min={0} max={20} step={1} unit=" pts" />
+                                    <TuningSlider label="High Nudge" value={config.burstiness?.highNudge ?? 10} onChange={v => updateField('burstiness.highNudge', v)} min={0} max={20} step={1} unit=" pts" />
+                                </div>
+                            </div>
+                        </div>
+                    </CollapsibleSection>
+                </div>
+            </div>
         </motion.div>
     );
 }

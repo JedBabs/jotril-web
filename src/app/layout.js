@@ -1,16 +1,14 @@
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Providers from "@/components/Providers";
 
-const geistSans = Geist({
+// System Font Fallback to ensure build success without external fetch
+const geistSans = {
     variable: "--font-geist-sans",
-    subsets: ["latin"],
-});
+};
 
-const geistMono = Geist_Mono({
+const geistMono = {
     variable: "--font-geist-mono",
-    subsets: ["latin"],
-});
+};
 
 export const metadata = {
     title: "Jotril AI — Detect AI-Generated Text with Precision",
