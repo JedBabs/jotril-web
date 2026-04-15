@@ -46,12 +46,14 @@ export default function FileUploader({ onAnalyze, disabled, deviceHash }) {
     const handleDrop = async (e) => {
         e.preventDefault();
         setIsDragging(false);
+        if (disabled) return;
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
             await processFile(e.dataTransfer.files[0]);
         }
     };
 
     const handleFileSelect = async (e) => {
+        if (disabled) return;
         if (e.target.files && e.target.files[0]) {
             await processFile(e.target.files[0]);
         }

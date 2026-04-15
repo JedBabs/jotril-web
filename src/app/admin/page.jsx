@@ -26,8 +26,7 @@ export default function AdminDashboardPage() {
     useEffect(() => {
         if (status === 'unauthenticated') router.push('/auth/signin');
         else if (status === 'authenticated') {
-            if (session.user.role !== 'ADMIN') router.push('/');
-            else fetchUsers();
+            fetchUsers();
         }
     }, [status, router, session]);
 
@@ -40,6 +39,7 @@ export default function AdminDashboardPage() {
             setUsers(data.users || []);
         } catch (err) {
             showToast('Unable to load users. Are you an admin?', 'error');
+            router.push('/dashboard');
         } finally {
             setIsLoading(false);
         }

@@ -508,7 +508,14 @@ export function attributeScoresToSentences(sentences, scenarios, scores, burstin
 
         return {
             text: sentence + ' ',
-            score: Math.max(0, Math.min(100, Math.round(finalScore)))
+            score: Math.max(0, Math.min(100, Math.round(finalScore))),
+            devMetrics: {
+                direct: Math.round(directScore),
+                differential: Math.round(differentialScore),
+                anchor: Math.round(anchorScore),
+                burstinessNudge: burstinessNudge,
+                rawFinal: Math.max(0, Math.min(100, Math.round(finalScore)))
+            }
         };
     });
 }
@@ -630,7 +637,12 @@ export function contextualSmooth(chunks) {
 
         return {
             ...chunk,
-            score: smoothedScore
+            score: smoothedScore,
+            devMetrics: {
+                ...chunk.devMetrics,
+                smoothedFrom: chunk.score,
+                smoothedTo: smoothedScore
+            }
         };
     });
 }

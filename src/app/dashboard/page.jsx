@@ -46,6 +46,7 @@ export default function EnhancedAccountPortal() {
     const [stats, setStats] = useState(null);
     const [isDataLoaded, setIsDataLoaded] = useState(false);
     const [copiedId, setCopiedId] = useState(null);
+    const [devMode, setDevMode] = useState(false);
 
     // Analysis State
     const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -354,10 +355,22 @@ export default function EnhancedAccountPortal() {
                                                 >
                                                     New Scan
                                                 </button>
+
+                                                {tier === 'ADMIN' && (
+                                                    <motion.button
+                                                        whileHover={{ scale: 1.05 }}
+                                                        whileTap={{ scale: 0.95 }}
+                                                        onClick={() => setDevMode(!devMode)}
+                                                        className={`px-4 py-2.5 rounded-xl font-bold text-xs border border-transparent shadow-md transition-all ${devMode ? 'bg-accent-purple text-white shadow-accent-purple/30 border-accent-pink/30' : 'bg-silver/20 text-navy hover:bg-silver/40'}`}
+                                                        title="Toggle developer analytics overlay"
+                                                    >
+                                                        🛠 Dev
+                                                    </motion.button>
+                                                )}
                                             </div>
                                         </div>
                                         <ScoreGauge breakdown={breakdown} overallLabel={overallLabel} sentenceCount={results.length} wordCount={results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0)} />
-                                        <HeatmapViewer chunks={results} />
+                                        <HeatmapViewer chunks={results} devMode={devMode} />
                                     </motion.div>
                                 )}
                             </AnimatePresence>
