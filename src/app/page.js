@@ -12,6 +12,7 @@ import QuotaBar from "@/components/QuotaBar";
 import SignUpNudge from "@/components/SignUpNudge";
 import InteractiveBackground from "@/components/InteractiveBackground";
 import { generateHardwareVector } from "@/lib/fingerprint";
+import { useProcess } from "@/components/ProcessContext";
 
 // ─── FAQ data ───────────────────────────────────────────────
 const faqs = [
@@ -199,7 +200,7 @@ export default function Home() {
         setMounted(true);
     }, []);
 
-    const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const { isActive, openProcess, simulateProgress, closeProcess } = useProcess();
     const [results, setResults] = useState(null);
     const [breakdown, setBreakdown] = useState(null);
     const [overallLabel, setOverallLabel] = useState("");
@@ -238,11 +239,19 @@ export default function Home() {
     const userRole = session?.user?.role || "UNAUTHENTICATED";
 
     const handleAnalyze = async (text, file = null) => {
-        if (isAnalyzing) return;
         if ((!text || text.trim() === "") && !file) {
             return showToast("Please enter text or upload a file first.", "warning");
         }
-        setIsAnalyzing(true);
+
+        openProcess("analyze", "Analyzing Scope", "Initializing Jotril Engine...");
+
+        simulateProgress([
+            { progress: 15, duration: 800, step: "Extracting semantic features..." },
+            { progress: 35, duration: 1500, step: "Vectorizing text chunks..." },
+            { progress: 65, duration: 2500, step: "Evaluating burstiness & complexity..." },
+            { progress: 85, duration: 2000, step: "Applying contextual smoothing..." },
+        ]);
+
         setResults(null);
         setColdStart(false);
         setScannedFile(file);
@@ -266,15 +275,15 @@ export default function Home() {
             const data = await res.json();
 
             if (!res.ok) {
-                if (data.type === "COLD_START") { setColdStart(true); setIsAnalyzing(false); return; }
+                if (data.type === "COLD_START") { setColdStart(true); closeProcess(); return; }
                 if (data.limitExceeded) {
                     showToast(data.error || "Quota limit exceeded. Please upgrade your tier.", "error");
-                    setIsAnalyzing(false);
+                    closeProcess();
                     setQuotaRefreshKey((k) => k + 1);
                     return;
                 }
                 showToast(data.error || "Analysis engine returned an error.", "error");
-                setIsAnalyzing(false);
+                closeProcess();
                 return;
             }
 
@@ -309,12 +318,12 @@ export default function Home() {
             } else {
                 showToast("No results returned from the analysis engine.", "error");
             }
-            setIsAnalyzing(false);
+            closeProcess();
             setQuotaRefreshKey((k) => k + 1);
         } catch (e) {
             console.error(e);
             showToast("Failed to reach the analysis engine. Please try again.", "error");
-            setIsAnalyzing(false);
+            closeProcess();
         }
     };
 
@@ -535,7 +544,7 @@ export default function Home() {
                 style={{ paddingTop: "4rem" }}
             >
                 <AnimatePresence mode="wait">
-                    {!results && !isAnalyzing && !coldStart && (
+                    {!results && !isActive && !coldStart && (
                         <motion.div
                             key="uploader"
                             initial={{ opacity: 0, scale: 0.98 }}
@@ -548,63 +557,12 @@ export default function Home() {
                                 className="rounded-[22px]"
                                 style={{ background: "var(--dyn-glass-bg)", backdropFilter: "blur(24px)" }}
                             >
-                                <FileUploader onAnalyze={handleAnalyze} disabled={isAnalyzing} deviceHash={deviceHash} />
+                                <FileUploader onAnalyze={handleAnalyze} disabled={isActive} deviceHash={deviceHash} />
                             </div>
                         </motion.div>
                     )}
 
-                    {isAnalyzing && (
-                        <motion.div
-                            key="loader"
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            className="flex flex-col items-center justify-center py-24 space-y-10"
-                        >
-                            {/* DNA helix spinner */}
-                            <div className="relative w-28 h-28">
-                                <div
-                                    className="absolute inset-0 rounded-full border-[3px] border-transparent"
-                                    style={{
-                                        borderTopColor: "var(--dyn-accent-blue)",
-                                        borderBottomColor: "var(--dyn-accent-purple)",
-                                        animation: "spin 1.4s linear infinite",
-                                    }}
-                                />
-                                <div
-                                    className="absolute inset-4 rounded-full border-[3px] border-transparent"
-                                    style={{
-                                        borderLeftColor: "var(--dyn-accent-pink)",
-                                        borderRightColor: "var(--color-accent-cyan)",
-                                        animation: "spin 0.9s linear infinite reverse",
-                                    }}
-                                />
-                                <div
-                                    className="absolute inset-8 rounded-full border-[3px] border-transparent"
-                                    style={{
-                                        borderTopColor: "var(--dyn-accent-blue)",
-                                        animation: "spin 1.8s linear infinite",
-                                    }}
-                                />
-                                <div
-                                    className="absolute inset-0 flex items-center justify-center"
-                                    style={{ color: "var(--dyn-accent-blue)" }}
-                                >
-                                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                                    </svg>
-                                </div>
-                            </div>
-                            <div className="text-center space-y-2">
-                                <p className="text-xl font-bold" style={{ color: "var(--dyn-text-navy)" }}>
-                                    Analyzing Your Content
-                                </p>
-                                <p className="text-sm font-medium" style={{ color: "var(--dyn-ash)" }}>
-                                    Running multi-scale detection across all text segments...
-                                </p>
-                            </div>
-                        </motion.div>
-                    )}
+
 
                     {coldStart && (
                         <motion.div key="coldstart" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -612,7 +570,7 @@ export default function Home() {
                         </motion.div>
                     )}
 
-                    {results && !isAnalyzing && (
+                    {results && !isActive && (
                         <motion.div
                             key="results"
                             initial={{ opacity: 0, y: 40, scale: 0.97 }}
@@ -639,16 +597,25 @@ export default function Home() {
                                             whileHover={{ scale: 1.03, y: -2 }}
                                             whileTap={{ scale: 0.98 }}
                                             onClick={async () => {
-                                                const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
-                                                libGen({
-                                                    filename: scannedFile.name,
-                                                    breakdown,
-                                                    overallLabel,
-                                                    chunks: results,
-                                                    sentenceCount: results.length,
-                                                    wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
-                                                    sourceHtml
-                                                });
+                                                openProcess("download", "Generating PDF", "Compiling styles & layout...");
+                                                simulateProgress([
+                                                    { progress: 30, duration: 1000, step: "Extracting Document Hierarchy..." },
+                                                    { progress: 70, duration: 1500, step: "Applying Analytics Markup..." }
+                                                ]);
+                                                try {
+                                                    const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
+                                                    libGen({
+                                                        filename: scannedFile.name,
+                                                        breakdown,
+                                                        overallLabel,
+                                                        chunks: results,
+                                                        sentenceCount: results.length,
+                                                        wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
+                                                        sourceHtml
+                                                    });
+                                                } finally {
+                                                    closeProcess();
+                                                }
                                             }}
                                             className="flex items-center gap-2 px-6 py-2.5 rounded-full font-bold text-sm text-white shadow-lg transition-all"
                                             style={{

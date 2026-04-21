@@ -33,6 +33,7 @@ import ScoreGauge from "@/components/ScoreGauge";
 import ColdStartOverlay from "@/components/ColdStartOverlay";
 import ToastContainer, { showToast } from "@/components/Toast";
 import { generateHardwareVector } from "@/lib/fingerprint";
+import { useProcess } from "@/components/ProcessContext";
 
 const tierGradients = {
     FREE: "from-accent-blue to-accent-cyan",
@@ -50,7 +51,7 @@ export default function EnhancedAccountPortal() {
     const [devMode, setDevMode] = useState(false);
 
     // Analysis State
-    const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const { isActive, openProcess, simulateProgress, closeProcess } = useProcess();
     const [results, setResults] = useState(null);
     const [breakdown, setBreakdown] = useState(null);
     const [overallLabel, setOverallLabel] = useState("");
@@ -100,7 +101,16 @@ export default function EnhancedAccountPortal() {
         if ((!text || text.trim() === "") && !file) {
             return showToast("Please enter text or upload a file first.", "warning");
         }
-        setIsAnalyzing(true);
+
+        openProcess("analyze", "Deep Scan Initialization", "Connecting to Jotril core...");
+
+        simulateProgress([
+            { progress: 20, duration: 800, step: "Extracting semantic tokens..." },
+            { progress: 50, duration: 1500, step: "Running burstiness calculations..." },
+            { progress: 80, duration: 2500, step: "Executing predictive layers..." },
+            { progress: 95, duration: 2000, step: "Finalizing confidence ratings..." },
+        ]);
+
         setResults(null);
         setColdStart(false);
         setScannedFile(file);
@@ -124,14 +134,14 @@ export default function EnhancedAccountPortal() {
             const data = await res.json();
 
             if (!res.ok) {
-                if (data.type === "COLD_START") { setColdStart(true); setIsAnalyzing(false); return; }
+                if (data.type === "COLD_START") { setColdStart(true); closeProcess(); return; }
                 if (data.limitExceeded) {
                     showToast(data.error || "Quota limit exceeded. Please upgrade your tier.", "error");
-                    setIsAnalyzing(false);
+                    closeProcess();
                     return;
                 }
                 showToast(data.error || "Analysis engine returned an error.", "error");
-                setIsAnalyzing(false);
+                closeProcess();
                 return;
             }
 
@@ -159,14 +169,17 @@ export default function EnhancedAccountPortal() {
                         console.error('Error generating PDF:', err);
                     }
                 }
+            } else {
+                showToast("No results returned from the analysis engine.", "error");
             }
-            setIsAnalyzing(false);
             setQuotaRefreshKey(k => k + 1);
             // Refresh dashboard data too
             fetch('/api/dashboard').then(r => r.json()).then(d => setStats(d));
+            closeProcess();
         } catch (e) {
-            showToast("Failed to reach analysis engine.", "error");
-            setIsAnalyzing(false);
+            console.error(e);
+            showToast("Failed to reach the analysis engine. Please try again.", "error");
+            closeProcess();
         }
     };
 
@@ -282,7 +295,7 @@ export default function EnhancedAccountPortal() {
                         {/* Integrated Scanner Section */}
                         <div id="scanner-anchor" className="space-y-8 pt-4">
                             <AnimatePresence mode="wait">
-                                {!results && !isAnalyzing && !coldStart && (
+                                {!results && !isActive && !coldStart && (
                                     <motion.div
                                         key="uploader"
                                         initial={{ opacity: 0, y: 20 }}
@@ -292,32 +305,19 @@ export default function EnhancedAccountPortal() {
                                     >
                                         <div className="rounded-[32px] p-1 bg-gradient-to-br from-silver/20 to-transparent">
                                             <div className="rounded-[31px]" style={{ background: "var(--dyn-glass-bg)", backdropFilter: "blur(24px)" }}>
-                                                <FileUploader onAnalyze={handleAnalyze} disabled={isAnalyzing} deviceHash={deviceHash} />
+                                                <FileUploader onAnalyze={handleAnalyze} disabled={isActive} deviceHash={deviceHash} />
                                             </div>
                                         </div>
                                     </motion.div>
                                 )}
 
-                                {isAnalyzing && (
-                                    <div className="py-20 flex flex-col items-center justify-center space-y-8 glass-card rounded-[32px]">
-                                        <div className="relative w-20 h-20">
-                                            <div className="absolute inset-0 rounded-full border-[3px] border-silver border-t-accent-blue animate-spin" />
-                                            <div className="absolute inset-0 flex items-center justify-center">
-                                                <Zap className="w-6 h-6 text-accent-blue animate-pulse" />
-                                            </div>
-                                        </div>
-                                        <div className="text-center">
-                                            <p className="font-black text-xl">Analyzing Content...</p>
-                                            <p className="text-sm text-ash font-medium mt-1">Jotril V2 Engine is processing your request</p>
-                                        </div>
-                                    </div>
-                                )}
+
 
                                 {coldStart && (
                                     <ColdStartOverlay onRetry={() => handleAnalyze(lastText)} />
                                 )}
 
-                                {results && !isAnalyzing && (
+                                {results && !isActive && (
                                     <motion.div
                                         initial={{ opacity: 0, y: 30 }}
                                         animate={{ opacity: 1, y: 0 }}
@@ -332,16 +332,25 @@ export default function EnhancedAccountPortal() {
                                                 {scannedFile && (
                                                     <button
                                                         onClick={async () => {
-                                                            const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
-                                                            libGen({
-                                                                filename: scannedFile.name,
-                                                                breakdown,
-                                                                overallLabel,
-                                                                chunks: results,
-                                                                sentenceCount: results.length,
-                                                                wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
-                                                                sourceHtml
-                                                            });
+                                                            openProcess("download", "Generating Report PDF", "Compiling styles & layout...");
+                                                            simulateProgress([
+                                                                { progress: 30, duration: 1000, step: "Extracting semantic tokens..." },
+                                                                { progress: 70, duration: 1500, step: "Executing predictive layers..." }
+                                                            ]);
+                                                            try {
+                                                                const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
+                                                                libGen({
+                                                                    filename: scannedFile.name,
+                                                                    breakdown,
+                                                                    overallLabel,
+                                                                    chunks: results,
+                                                                    sentenceCount: results.length,
+                                                                    wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
+                                                                    sourceHtml
+                                                                });
+                                                            } finally {
+                                                                closeProcess();
+                                                            }
                                                         }}
                                                         className="px-5 py-2.5 bg-gradient-to-tr from-accent-blue to-accent-purple text-white rounded-xl font-bold text-xs shadow-lg"
                                                     >
@@ -445,15 +454,24 @@ export default function EnhancedAccountPortal() {
                                                 <td className="p-5 text-right">
                                                     <button
                                                         onClick={async () => {
-                                                            const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
-                                                            libGen({
-                                                                filename: scan.filename || 'Text_Scan',
-                                                                breakdown: scan.breakdown || {},
-                                                                overallLabel: scan.overallLabel || "",
-                                                                chunks: scan.chunks || [],
-                                                                sentenceCount: scan.sentenceCount || 0,
-                                                                wordCount: scan.wordCount || 0
-                                                            });
+                                                            openProcess("download", "Generating Report PDF", "Compiling styles & layout...");
+                                                            simulateProgress([
+                                                                { progress: 30, duration: 600, step: "Extracting semantic tokens..." },
+                                                                { progress: 70, duration: 800, step: "Executing predictive layers..." }
+                                                            ]);
+                                                            try {
+                                                                const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
+                                                                libGen({
+                                                                    filename: scan.filename || 'Text_Scan',
+                                                                    breakdown: scan.breakdown || {},
+                                                                    overallLabel: scan.overallLabel || "",
+                                                                    chunks: scan.chunks || [],
+                                                                    sentenceCount: scan.sentenceCount || 0,
+                                                                    wordCount: scan.wordCount || 0
+                                                                });
+                                                            } finally {
+                                                                closeProcess();
+                                                            }
                                                         }}
                                                         className="px-4 py-2 bg-gradient-to-tr from-accent-blue to-accent-purple text-white rounded-lg font-bold text-xs shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
                                                     >

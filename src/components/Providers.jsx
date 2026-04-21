@@ -1,13 +1,16 @@
 "use client";
 import { SessionProvider } from "next-auth/react";
 import { ThemeProvider } from "next-themes";
+import { ProcessProvider } from "./ProcessContext";
 
 export default function Providers({ children }) {
     return (
         <SessionProvider>
-            <ThemeProvider attribute="data-theme" defaultTheme="light" themes={['light', 'dark', 'colorful']}>
-                {children}
-            </ThemeProvider>
+            <ProcessProvider>
+                <ThemeProvider attribute="data-theme" defaultTheme="light" themes={['light', 'dark', 'colorful']}>
+                    {children}
+                </ThemeProvider>
+            </ProcessProvider>
         </SessionProvider>
     );
 }
