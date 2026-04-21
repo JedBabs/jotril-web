@@ -34,6 +34,7 @@ import ColdStartOverlay from "@/components/ColdStartOverlay";
 import ToastContainer, { showToast } from "@/components/Toast";
 import { generateHardwareVector } from "@/lib/fingerprint";
 import { useProcess } from "@/components/ProcessContext";
+import ThemeSwitcher from "@/components/ThemeSwitcher";
 
 const tierGradients = {
     FREE: "from-accent-blue to-accent-cyan",
@@ -243,6 +244,7 @@ export default function EnhancedAccountPortal() {
                             </div>
                             <p className="text-sm font-black text-navy">{stats?.email}</p>
                         </div>
+                        <ThemeSwitcher />
                         <button
                             onClick={() => signOut()}
                             className="p-3 glass-card !rounded-full text-ash hover:text-score-ai transition-colors"
@@ -447,7 +449,7 @@ export default function EnhancedAccountPortal() {
                                                     </div>
                                                 </td>
                                                 <td className="p-5 text-center">
-                                                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${scan.overallLabel === 'Human' || scan.overallLabel === 'HUMAN' ? 'bg-score-human/10 text-score-human' : scan.overallLabel === 'Mixed' || scan.overallLabel === 'MIXED' ? 'bg-score-mixed/10 text-score-mixed' : 'bg-score-ai/10 text-score-ai'}`}>
+                                                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${(scan.overallLabel || '').toLowerCase().includes('human') ? 'bg-score-human/10 text-score-human' : (scan.overallLabel || '').toLowerCase().includes('mixed') ? 'bg-score-mixed/10 text-score-mixed' : 'bg-score-ai/10 text-score-ai'}`}>
                                                         {scan.overallLabel}
                                                     </span>
                                                 </td>
