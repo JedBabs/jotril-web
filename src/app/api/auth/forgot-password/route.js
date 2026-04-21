@@ -3,15 +3,7 @@ import { NextResponse } from 'next/server';
 import getPrisma from '@/lib/prisma';
 import { createPasswordResetToken } from '@/lib/auth-security';
 
-// In production, this would use a real email sender like SendGrid.
-// Given SMTP isn't set up yet, we will mock the email sending for now 
-// and print the reset link to the console for testing.
-async function sendResetEmail(email, resetLink) {
-    console.log('\n=============================================');
-    console.log(`[AUTH] MOCK EMAIL SENT TO: ${email}`);
-    console.log(`[AUTH] Reset Link: ${resetLink}`);
-    console.log('=============================================\n');
-}
+import { sendPasswordResetEmail } from '@/lib/email';
 
 export async function POST(req) {
     try {
@@ -33,17 +25,16 @@ export async function POST(req) {
 
         // Generate token and link
         const token = await createPasswordResetToken(user.id);
-        
+
         // Construct the reset URL depending on environment
         const host = req.headers.get('host');
         const protocol = host.includes('localhost') ? 'http' : 'https';
-        const resetLink = `${protocol}://${host}/auth/reset-password?token=${token}`;
+        const baseUrl = `${protocol}://${host}`;
+        await sendPasswordResetEmail(user.email, token, baseUrl);
 
-        await sendResetEmail(user.email, resetLink);
-
-        return NextResponse.json({ 
-            success: true, 
-            message: 'If an account exists, a reset email has been sent.' 
+        return NextResponse.json({
+            success: true,
+            message: 'If an account exists, a reset email has been sent.'
         });
 
     } catch (error) {

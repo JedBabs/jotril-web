@@ -60,6 +60,13 @@ export async function GET(req) {
             }
         });
 
+        // Past scan results
+        const pastScanResults = await prisma.scanResult.findMany({
+            where: { userId },
+            orderBy: { createdAt: 'desc' },
+            take: 10
+        });
+
         return NextResponse.json({
             totalRequests,
             totalPointsSpent: totalPoints._sum.pointsCost || 0,
@@ -69,7 +76,8 @@ export async function GET(req) {
             email: user?.email,
             name: user?.name,
             memberSince: user?.createdAt,
-            recentScans
+            recentScans,
+            pastScanResults
         });
     } catch (error) {
         console.error('[Dashboard] Error:', error);

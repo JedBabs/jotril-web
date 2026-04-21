@@ -8,6 +8,7 @@ import { authOptions } from '../auth/[...nextauth]/route';
 
 import { checkQuota, recordQuotaUsage, hashText, calculatePointCost, hashFingerprint } from '@/lib/quota-manager';
 import { extractTextFromDocument } from '@/lib/file-parser';
+import getPrisma from '@/lib/prisma';
 
 export async function POST(req) {
     try {
@@ -16,6 +17,7 @@ export async function POST(req) {
         let hardwareFootprint = {};
         let isDocumentRequest = false;
         let contentSize = 0;
+        let fileName = null;
 
         if (contentType.includes('multipart/form-data')) {
             isDocumentRequest = true;
@@ -28,6 +30,7 @@ export async function POST(req) {
             if (!file || typeof file === 'string') {
                 return NextResponse.json({ error: 'No valid document file provided' }, { status: 400 });
             }
+            fileName = file.name;
 
             const buffer = Buffer.from(await file.arrayBuffer());
             contentSize = buffer.byteLength;
@@ -41,6 +44,11 @@ export async function POST(req) {
 
         if (!text || text.trim() === '') {
             return NextResponse.json({ error: 'No text or recognizable content could be extracted' }, { status: 400 });
+        }
+
+        const wordCount = text.trim().split(/\s+/).length;
+        if (wordCount < 100) {
+            return NextResponse.json({ error: 'Content must contain at least 100 words for accurate analysis.' }, { status: 400 });
         }
 
         // Identify the user and device
@@ -120,6 +128,26 @@ export async function POST(req) {
 
         // Classify into human/mixed/ai
         const { chunks: classifiedChunks, breakdown, overallLabel } = classifyResults(smoothedChunks, engineCfg);
+
+        if (userId) {
+            try {
+                const prisma = getPrisma();
+                await prisma.scanResult.create({
+                    data: {
+                        userId,
+                        filename: fileName,
+                        type: requestType,
+                        wordCount,
+                        sentenceCount,
+                        overallLabel,
+                        breakdown,
+                        chunks: classifiedChunks
+                    }
+                });
+            } catch (err) {
+                console.error('[Analyze] Error saving ScanResult:', err);
+            }
+        }
 
         return NextResponse.json({
             success: true,

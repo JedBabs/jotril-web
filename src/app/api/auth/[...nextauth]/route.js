@@ -1,14 +1,24 @@
 import NextAuth from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
+import GoogleProvider from "next-auth/providers/google";
+import { PrismaAdapter } from "@auth/prisma-adapter";
 import getPrisma from "@/lib/prisma";
 import bcrypt from "bcrypt";
 import { checkBruteForce, recordFailedLogin, clearBruteForce } from "@/lib/auth-security";
 
+const prisma = getPrisma();
+
 export const authOptions = {
+    adapter: PrismaAdapter(prisma),
     pages: {
         signIn: '/auth/signin',
     },
     providers: [
+        GoogleProvider({
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+            allowDangerousEmailAccountLinking: true,
+        }),
         CredentialsProvider({
             name: "Credentials",
             credentials: {
@@ -26,8 +36,8 @@ export const authOptions = {
                 const bruteStatus = await checkBruteForce(email);
                 if (!bruteStatus.allowed) {
                     const unlockTime = new Date(bruteStatus.lockedUntil).toLocaleTimeString();
-                    throw new Error(JSON.stringify({ 
-                        message: `Account temporarily locked due to too many failed attempts. Try again after ${unlockTime}.` 
+                    throw new Error(JSON.stringify({
+                        message: `Account temporarily locked due to too many failed attempts. Try again after ${unlockTime}.`
                     }));
                 }
 
@@ -40,34 +50,41 @@ export const authOptions = {
                 if (!user || !user.password) {
                     // Record failed attempt even if user doesn't exist (prevents user enumeration)
                     const newStatus = await recordFailedLogin(email);
-                    throw new Error(JSON.stringify({ 
-                        message: `Invalid credentials. ${newStatus.remainingTries} tries left.` 
+                    throw new Error(JSON.stringify({
+                        message: `Invalid credentials. ${newStatus.remainingTries} tries left.`
                     }));
                 }
 
                 // 3. Verify Password
                 const isValidPassword = await bcrypt.compare(credentials.password, user.password);
-                
+
                 if (!isValidPassword) {
                     const newStatus = await recordFailedLogin(email);
                     if (!newStatus.allowed) {
-                        throw new Error(JSON.stringify({ 
-                            message: `Account locked. Too many failed attempts.` 
+                        throw new Error(JSON.stringify({
+                            message: `Account locked. Too many failed attempts.`
                         }));
                     }
-                    throw new Error(JSON.stringify({ 
-                        message: `Invalid credentials. ${newStatus.remainingTries} tries left.` 
+                    throw new Error(JSON.stringify({
+                        message: `Invalid credentials. ${newStatus.remainingTries} tries left.`
                     }));
                 }
 
-                // 4. Success! Clear brute force record
+                // 4. Verify Email Status
+                if (!user.emailVerified) {
+                    throw new Error(JSON.stringify({
+                        message: 'Please verify your email address before signing in.'
+                    }));
+                }
+
+                // 5. Success! Clear brute force record
                 await clearBruteForce(email);
 
-                return { 
-                    id: user.id, 
-                    name: user.name, 
-                    email: user.email, 
-                    role: user.role 
+                return {
+                    id: user.id,
+                    name: user.name,
+                    email: user.email,
+                    role: user.role
                 };
             }
         })
@@ -79,8 +96,11 @@ export const authOptions = {
     callbacks: {
         async jwt({ token, user, trigger, session }) {
             if (user) {
-                token.role = user.role;
-                token.id = user.id;
+                // If OAuth user just got created/signed-in, they may not have a role in the object yet, 
+                // but the Prisma schema defaults to 'FREE'. Let's ensure it's on the token.
+                const dbUser = await prisma.user.findUnique({ where: { email: token.email } });
+                token.role = dbUser?.role || user.role || 'FREE';
+                token.id = dbUser?.id || user.id;
             }
             // Allow manual role updates (e.g. from admin panel modifying sessions)
             if (trigger === "update" && session?.role) {

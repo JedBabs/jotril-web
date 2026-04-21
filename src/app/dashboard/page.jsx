@@ -139,6 +139,23 @@ export default function EnhancedAccountPortal() {
                 setBreakdown(data.breakdown || {});
                 setOverallLabel(data.overallLabel || "");
                 showToast(data.cached ? "Results loaded from cache!" : `Analysis complete!`, "success");
+
+                if (file) {
+                    try {
+                        const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
+                        libGen({
+                            filename: file.name,
+                            breakdown: data.breakdown || {},
+                            overallLabel: data.overallLabel || "",
+                            chunks: data.chunks,
+                            sentenceCount: data.chunks.length || 0,
+                            wordCount: data.chunks.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0)
+                        });
+                        showToast("PDF report generated successfully", "success");
+                    } catch (err) {
+                        console.error('Error generating PDF:', err);
+                    }
+                }
             }
             setIsAnalyzing(false);
             setQuotaRefreshKey(k => k + 1);
@@ -378,26 +395,26 @@ export default function EnhancedAccountPortal() {
                             </div>
                         </div>
 
-                        {/* Recent Activity History */}
+                        {/* Past Analysis Results */}
                         <div className="glass-card rounded-[32px] overflow-hidden p-1">
                             <div className="p-6 pb-2 flex items-center justify-between">
                                 <div className="flex items-center gap-3">
                                     <div className="p-2 bg-navy/5 rounded-lg text-navy">
                                         <History className="w-4 h-4" />
                                     </div>
-                                    <h3 className="font-black text-lg">Recent Content History</h3>
+                                    <h3 className="font-black text-lg">Previous Uploads</h3>
                                 </div>
-                                <span className="text-[10px] font-bold text-ash uppercase tracking-widest">Last 10 Scans</span>
+                                <span className="text-[10px] font-bold text-ash uppercase tracking-widest">Last 10 Reports</span>
                             </div>
 
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left">
                                     <tbody className="divide-y divide-silver/40">
-                                        {recentScans.length === 0 ? (
+                                        {!(stats?.pastScanResults?.length > 0) ? (
                                             <tr>
-                                                <td className="p-12 text-center text-ash font-medium text-sm">No recent scans detected. Start scanning to build history.</td>
+                                                <td className="p-12 text-center text-ash font-medium text-sm">No previous scan reports found. Start analyzing to build history.</td>
                                             </tr>
-                                        ) : recentScans.map((scan, i) => (
+                                        ) : stats.pastScanResults.map((scan, i) => (
                                             <motion.tr
                                                 key={scan.id}
                                                 initial={{ opacity: 0, x: -10 }}
@@ -411,14 +428,33 @@ export default function EnhancedAccountPortal() {
                                                             {scan.type === 'DOCUMENT' ? <FileText className="w-4 h-4" /> : <div className="text-[10px] font-black">TX</div>}
                                                         </div>
                                                         <div>
-                                                            <p className="font-bold text-sm text-navy">{scan.type === 'DOCUMENT' ? 'Document Analysis' : 'Text Scan'}</p>
+                                                            <p className="font-bold text-sm text-navy max-w-[200px] truncate">{scan.filename || 'Text Input Scan'}</p>
                                                             <p className="text-xs text-ash font-medium">{new Date(scan.createdAt).toLocaleDateString()} at {new Date(scan.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                                                         </div>
                                                     </div>
                                                 </td>
+                                                <td className="p-5 text-center">
+                                                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${scan.overallLabel === 'Human' || scan.overallLabel === 'HUMAN' ? 'bg-score-human/10 text-score-human' : scan.overallLabel === 'Mixed' || scan.overallLabel === 'MIXED' ? 'bg-score-mixed/10 text-score-mixed' : 'bg-score-ai/10 text-score-ai'}`}>
+                                                        {scan.overallLabel}
+                                                    </span>
+                                                </td>
                                                 <td className="p-5 text-right">
-                                                    <span className="text-xs font-bold text-ash uppercase tracking-widest mr-3">COST</span>
-                                                    <span className="font-mono font-bold text-navy">-{scan.pointsCost} <span className="text-[10px] text-ash">PTS</span></span>
+                                                    <button
+                                                        onClick={async () => {
+                                                            const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
+                                                            libGen({
+                                                                filename: scan.filename || 'Text_Scan',
+                                                                breakdown: scan.breakdown || {},
+                                                                overallLabel: scan.overallLabel || "",
+                                                                chunks: scan.chunks || [],
+                                                                sentenceCount: scan.sentenceCount || 0,
+                                                                wordCount: scan.wordCount || 0
+                                                            });
+                                                        }}
+                                                        className="px-4 py-2 bg-gradient-to-tr from-accent-blue to-accent-purple text-white rounded-lg font-bold text-xs shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
+                                                    >
+                                                        Download PDF
+                                                    </button>
                                                 </td>
                                             </motion.tr>
                                         ))}
@@ -429,6 +465,26 @@ export default function EnhancedAccountPortal() {
 
                         {/* Dashboard Sub-Pages Grid */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+
+                            {tier === 'ADMIN' && (
+                                <motion.button
+                                    whileHover={{ scale: 1.02, y: -2 }}
+                                    whileTap={{ scale: 0.98 }}
+                                    onClick={() => router.push('/admin')}
+                                    className="glass-card rounded-[32px] p-8 text-left transition-all hover:bg-surface/50 group border border-transparent hover:border-score-human/30 relative overflow-hidden ring-2 ring-score-human/20"
+                                >
+                                    <div className="absolute -top-12 -right-12 w-32 h-32 bg-score-human/10 rounded-full blur-2xl group-hover:bg-score-human/20 transition-colors" />
+                                    <div className="flex items-center gap-3 mb-4 text-score-human">
+                                        <div className="p-3 bg-score-human/10 rounded-2xl group-hover:scale-110 transition-transform"><Shield className="w-6 h-6" /></div>
+                                        <h3 className="font-black text-xl text-navy">Admin Hub</h3>
+                                    </div>
+                                    <p className="text-sm text-ash font-medium leading-relaxed">System dashboard, user management, and quota overrides.</p>
+                                    <div className="mt-8 flex items-center text-xs font-bold text-score-human uppercase tracking-widest group-hover:gap-2 transition-all">
+                                        Open Console <ArrowUpRight className="w-4 h-4 ml-1" />
+                                    </div>
+                                </motion.button>
+                            )}
+
                             <motion.button
                                 whileHover={{ scale: 1.02, y: -2 }}
                                 whileTap={{ scale: 0.98 }}

@@ -11,13 +11,19 @@ datasource db {
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
+  emailVerified DateTime?
   password  String?  // Optional for future-proofing OAuth, required for credentials
   name      String?
   role      String   @default("FREE") // Values: FREE, PRO, ULTRA, ADMIN
   purchasedPoints  Int  @default(0)    // Bought points that never expire
+  
   apiKeys   ApiKey[]
   quotaUsages QuotaUsage[]
   resetTokens PasswordResetToken[]
+  accounts    Account[]
+  sessions    Session[]
+  scanResults ScanResult[]
+  
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -29,6 +35,22 @@ model ApiKey {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model ScanResult {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  filename      String?
+  type          String   // 'TEXT' or 'DOCUMENT'
+  wordCount     Int
+  sentenceCount Int
+  overallLabel  String
+  breakdown     Json     // { human, mixed, ai }
+  chunks        Json     // The analyzed chunks
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
 }
 
 model AnalysisRequest {
@@ -86,4 +108,43 @@ model EngineConfig {
   data         Json     // Current active config
   previousData Json?    // Snapshot before last change (for undo)
   updatedAt    DateTime @updatedAt
+}
+
+model EmailVerificationToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  identifier String  // Will hold the email address
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([identifier])
+}
+
+// NextAuth Required Models for OAuth (Prisma Adapter)
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?  @db.Text
+  access_token       String?  @db.Text
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?  @db.Text
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

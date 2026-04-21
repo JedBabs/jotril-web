@@ -42,6 +42,11 @@ export async function POST(req) {
             return NextResponse.json({ error: 'No text to estimate' }, { status: 400 });
         }
 
+        const wordCount = text.trim().split(/\s+/).length;
+        if (wordCount < 100) {
+            return NextResponse.json({ error: 'Content must contain at least 100 words for accurate analysis.' }, { status: 400 });
+        }
+
         // Get session & identity
         const session = await getServerSession(authOptions);
         const role = session?.user?.role || 'UNAUTHENTICATED';

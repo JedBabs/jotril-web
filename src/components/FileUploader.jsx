@@ -16,7 +16,8 @@ export default function FileUploader({ onAnalyze, disabled, deviceHash }) {
     useEffect(() => {
         if (debounceRef.current) clearTimeout(debounceRef.current);
 
-        if (!text.trim() || text.trim().length < 20) {
+        const currentWordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
+        if (!text.trim() || currentWordCount < 100) {
             setCostPreview(null);
             return;
         }
@@ -84,6 +85,12 @@ export default function FileUploader({ onAnalyze, disabled, deviceHash }) {
         if (!text.trim()) {
             return showToast("Please enter text or upload a file first.", "warning");
         }
+
+        const currentWordCount = text.trim().split(/\s+/).length;
+        if (currentWordCount < 100) {
+            return showToast("Please enter at least 100 words for accurate analysis.", "warning");
+        }
+
         setCostPreview(null);
         onAnalyze(text, null);
     };

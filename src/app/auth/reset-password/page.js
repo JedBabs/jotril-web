@@ -115,8 +115,25 @@ function ResetPasswordForm() {
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 className="block w-full px-4 py-3 border border-silver rounded-xl bg-white/50 placeholder-ash-light focus:outline-none focus:border-accent-blue focus:ring-2 focus:ring-accent-blue/10 transition-all text-navy font-medium disabled:opacity-50"
-                                placeholder="••••••••"
+                                placeholder="•••••••••"
                             />
+
+                            {/* Password Strength Indicator */}
+                            {password.length > 0 && (
+                                <div className="mt-2 space-y-1">
+                                    <div className="flex gap-1 h-1.5 w-full rounded-full overflow-hidden">
+                                        <div className={`h-full flex-1 transition-colors ${password.length >= 8 ? 'bg-score-human' : 'bg-silver'}`} />
+                                        <div className={`h-full flex-1 transition-colors ${/(?=.*[A-Z])/.test(password) && /(?=.*[a-z])/.test(password) ? 'bg-score-human' : 'bg-silver'}`} />
+                                        <div className={`h-full flex-1 transition-colors ${/(?=.*\d)/.test(password) ? 'bg-score-human' : 'bg-silver'}`} />
+                                        <div className={`h-full flex-1 transition-colors ${/(?=.*[@$!%*?&])/.test(password) ? 'bg-score-human' : 'bg-silver'}`} />
+                                    </div>
+                                    <p className="text-[10px] font-bold text-ash flex justify-between">
+                                        <span>Weak</span>
+                                        <span>Strong</span>
+                                    </p>
+                                </div>
+                            )}
+                            <p className="mt-1 text-xs font-semibold text-ash">Must be 8+ chars and contain uppercase, lowercase, number & symbol.</p>
                         </motion.div>
 
                         {status.message && (

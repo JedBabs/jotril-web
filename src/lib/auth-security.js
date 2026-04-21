@@ -10,7 +10,7 @@ const LOCKOUT_DURATION_MS = 3 * 60 * 1000; // 3 minutes
  */
 export async function checkBruteForce(identifier) {
     const prisma = getPrisma();
-    
+
     // Clean up expired lockouts first
     await prisma.accountLockout.updateMany({
         where: {
@@ -45,7 +45,7 @@ export async function checkBruteForce(identifier) {
  */
 export async function recordFailedLogin(identifier) {
     const prisma = getPrisma();
-    
+
     const record = await prisma.accountLockout.upsert({
         where: { identifier },
         update: { failedAttempts: { increment: 1 } },
@@ -61,10 +61,10 @@ export async function recordFailedLogin(identifier) {
         return { allowed: false, remainingTries: 0, lockedUntil };
     }
 
-    return { 
-        allowed: true, 
-        remainingTries: MAX_FAILED_ATTEMPTS - record.failedAttempts, 
-        lockedUntil: null 
+    return {
+        allowed: true,
+        remainingTries: MAX_FAILED_ATTEMPTS - record.failedAttempts,
+        lockedUntil: null
     };
 }
 
@@ -83,7 +83,7 @@ export async function clearBruteForce(identifier) {
  */
 export async function createPasswordResetToken(userId) {
     const prisma = getPrisma();
-    
+
     // Clear old tokens for this user first
     await prisma.passwordResetToken.deleteMany({
         where: { userId }
@@ -108,7 +108,7 @@ export async function createPasswordResetToken(userId) {
  */
 export async function validateResetToken(token) {
     if (!token) return null;
-    
+
     const prisma = getPrisma();
     const record = await prisma.passwordResetToken.findUnique({
         where: { token }
@@ -123,4 +123,50 @@ export async function validateResetToken(token) {
     }
 
     return record.userId;
+}
+
+/**
+ * Generates an Email Verification token for the given email identifier.
+ */
+export async function createEmailVerificationToken(email) {
+    const prisma = getPrisma();
+
+    // Clear old tokens for this email
+    await prisma.emailVerificationToken.deleteMany({
+        where: { identifier: email }
+    });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours validity
+
+    await prisma.emailVerificationToken.create({
+        data: {
+            token,
+            identifier: email,
+            expiresAt
+        }
+    });
+
+    return token;
+}
+
+/**
+ * Validates an Email Verification token and returns the email if valid.
+ */
+export async function validateEmailVerificationToken(token) {
+    if (!token) return null;
+
+    const prisma = getPrisma();
+    const record = await prisma.emailVerificationToken.findUnique({
+        where: { token }
+    });
+
+    if (!record) return null;
+
+    if (record.expiresAt < new Date()) {
+        await prisma.emailVerificationToken.delete({ where: { id: record.id } });
+        return null; // Expired
+    }
+
+    return record.identifier;
 }

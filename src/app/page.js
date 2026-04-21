@@ -286,6 +286,23 @@ export default function Home() {
                 } else {
                     showToast(`Analysis complete! ${data.pointsCost || 0} points used.`, "success");
                 }
+
+                if (file) {
+                    try {
+                        const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
+                        libGen({
+                            filename: file.name,
+                            breakdown: data.breakdown || {},
+                            overallLabel: data.overallLabel || "",
+                            chunks: data.chunks,
+                            sentenceCount: data.chunks.length || 0,
+                            wordCount: data.chunks.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0)
+                        });
+                        showToast("PDF report generated successfully", "success");
+                    } catch (err) {
+                        console.error('Error generating PDF:', err);
+                    }
+                }
             } else {
                 showToast("No results returned from the analysis engine.", "error");
             }
