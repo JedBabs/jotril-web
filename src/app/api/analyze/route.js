@@ -7,7 +7,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '../auth/[...nextauth]/route';
 
 import { checkQuota, recordQuotaUsage, hashText, calculatePointCost, hashFingerprint } from '@/lib/quota-manager';
-import { extractTextFromDocument } from '@/lib/file-parser';
+import { extractTextFromDocument, extractHtmlFromDocument } from '@/lib/file-parser';
 import getPrisma from '@/lib/prisma';
 
 export async function POST(req) {
@@ -35,6 +35,8 @@ export async function POST(req) {
             const buffer = Buffer.from(await file.arrayBuffer());
             contentSize = buffer.byteLength;
             text = await extractTextFromDocument(buffer, file.type);
+            // Also extract structured HTML for formatting-preserving PDF export
+            var sourceHtml = await extractHtmlFromDocument(buffer, file.type);
         } else {
             const jsonBody = await req.json();
             text = jsonBody.text || '';
@@ -154,6 +156,7 @@ export async function POST(req) {
             chunks: classifiedChunks,
             breakdown,
             overallLabel,
+            sourceHtml: sourceHtml || null,
             pointsCost: pointCost,
             cached: false,
         });

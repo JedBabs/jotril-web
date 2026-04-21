@@ -207,6 +207,7 @@ export default function Home() {
     const [deviceHash, setDeviceHash] = useState(null);
     const [lastText, setLastText] = useState("");
     const [scannedFile, setScannedFile] = useState(null);
+    const [sourceHtml, setSourceHtml] = useState(null);
     const [openFaq, setOpenFaq] = useState(null);
     const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
     const { data: session } = useSession();
@@ -281,6 +282,7 @@ export default function Home() {
                 setResults(data.chunks);
                 setBreakdown(data.breakdown || {});
                 setOverallLabel(data.overallLabel || "");
+                setSourceHtml(data.sourceHtml || null);
                 if (data.cached) {
                     showToast("Results loaded from cache — 0 points used!", "success");
                 } else {
@@ -296,7 +298,8 @@ export default function Home() {
                             overallLabel: data.overallLabel || "",
                             chunks: data.chunks,
                             sentenceCount: data.chunks.length || 0,
-                            wordCount: data.chunks.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0)
+                            wordCount: data.chunks.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
+                            sourceHtml: data.sourceHtml || null
                         });
                         showToast("PDF report generated successfully", "success");
                     } catch (err) {
@@ -643,7 +646,8 @@ export default function Home() {
                                                     overallLabel,
                                                     chunks: results,
                                                     sentenceCount: results.length,
-                                                    wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0)
+                                                    wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
+                                                    sourceHtml
                                                 });
                                             }}
                                             className="flex items-center gap-2 px-6 py-2.5 rounded-full font-bold text-sm text-white shadow-lg transition-all"

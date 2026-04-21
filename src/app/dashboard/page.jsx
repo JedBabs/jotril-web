@@ -58,6 +58,7 @@ export default function EnhancedAccountPortal() {
     const [deviceHash, setDeviceHash] = useState(null);
     const [lastText, setLastText] = useState("");
     const [scannedFile, setScannedFile] = useState(null);
+    const [sourceHtml, setSourceHtml] = useState(null);
     const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
 
     // Sync session role if database role has changed (e.g. after manual upgrade)
@@ -138,6 +139,7 @@ export default function EnhancedAccountPortal() {
                 setResults(data.chunks);
                 setBreakdown(data.breakdown || {});
                 setOverallLabel(data.overallLabel || "");
+                setSourceHtml(data.sourceHtml || null);
                 showToast(data.cached ? "Results loaded from cache!" : `Analysis complete!`, "success");
 
                 if (file) {
@@ -149,7 +151,8 @@ export default function EnhancedAccountPortal() {
                             overallLabel: data.overallLabel || "",
                             chunks: data.chunks,
                             sentenceCount: data.chunks.length || 0,
-                            wordCount: data.chunks.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0)
+                            wordCount: data.chunks.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
+                            sourceHtml: data.sourceHtml || null
                         });
                         showToast("PDF report generated successfully", "success");
                     } catch (err) {
@@ -336,7 +339,8 @@ export default function EnhancedAccountPortal() {
                                                                 overallLabel,
                                                                 chunks: results,
                                                                 sentenceCount: results.length,
-                                                                wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0)
+                                                                wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
+                                                                sourceHtml
                                                             });
                                                         }}
                                                         className="px-5 py-2.5 bg-gradient-to-tr from-accent-blue to-accent-purple text-white rounded-xl font-bold text-xs shadow-lg"

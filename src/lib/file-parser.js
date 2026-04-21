@@ -45,3 +45,27 @@ export async function extractTextFromDocument(buffer, mimeType) {
 
     throw new Error(`Unsupported document format: ${mimeType}`);
 }
+
+/**
+ * Extracts structured HTML from supported document buffers.
+ * Only DOCX files produce reliable HTML via mammoth. PDF/TXT return null.
+ * 
+ * @param {Buffer} buffer - The file buffer
+ * @param {string} mimeType - The mime type of the document
+ * @returns {Promise<string|null>} The HTML string or null
+ */
+export async function extractHtmlFromDocument(buffer, mimeType) {
+    if (
+        mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        mimeType === 'application/msword'
+    ) {
+        try {
+            const result = await mammoth.convertToHtml({ buffer });
+            return result.value || null;
+        } catch (error) {
+            console.error('[FileParser] DOCX HTML extraction failed:', error);
+            return null;
+        }
+    }
+    return null; // PDFs and plain text have no reliable HTML source
+}
