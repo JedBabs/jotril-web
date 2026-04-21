@@ -16,6 +16,7 @@ model User {
   role      String   @default("FREE") // Values: FREE, PRO, ULTRA, ADMIN
   purchasedPoints  Int  @default(0)    // Bought points that never expire
   apiKeys   ApiKey[]
+  quotaUsages QuotaUsage[]
   resetTokens PasswordResetToken[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -65,6 +66,7 @@ model PasswordResetToken {
 model QuotaUsage {
   id            String   @id @default(uuid())
   userId        String?  // Null for unauthenticated users
+  user          User?    @relation(fields: [userId], references: [id])
   hash          String?  // Hardware footprint hash
   type          String   // 'TEXT' or 'DOCUMENT'
   size          Int      // Characters or Bytes
