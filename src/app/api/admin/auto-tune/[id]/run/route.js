@@ -187,6 +187,7 @@ export async function GET(req, { params }) {
                         progress: run.progress,
                         message: run.message,
                         trialCount: run.trialCount,
+                        bestAccuracy: run.bestAccuracy,
                         bestMcc: run.bestMcc,
                         error: run.error,
                         completedAt: run.completedAt,

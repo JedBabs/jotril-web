@@ -623,6 +623,8 @@ function AutoTunePanel() {
     const [runProgress, setRunProgress] = useState(null);
     const [isApplying, setIsApplying] = useState(null); // stores dataset ID being applied
     const [isDeleting, setIsDeleting] = useState(null); // stores dataset ID being deleted
+    const [hasLocalDataset, setHasLocalDataset] = useState(false);
+    const [isInitializingMaster, setIsInitializingMaster] = useState(false);
 
     useEffect(() => {
         fetchDatasets();
@@ -640,6 +642,7 @@ function AutoTunePanel() {
             const res = await fetch('/api/admin/auto-tune');
             const data = await res.json();
             setDatasets(data.datasets || []);
+            setHasLocalDataset(data.hasLocalDataset || false);
             setIsLoading(false);
         } catch (err) {
             console.error('Failed to load datasets:', err);
@@ -679,6 +682,29 @@ function AutoTunePanel() {
         };
 
         reader.readAsText(file);
+    };
+
+    const handleInitializeMaster = async () => {
+        setIsInitializingMaster(true);
+        try {
+            const res = await fetch('/api/admin/auto-tune', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ source: 'local', name: 'Master Dataset' })
+            });
+
+            const data = await res.json();
+            if (data.success) {
+                showToast('Master Dataset initialized successfully!', 'success');
+                fetchDatasets();
+            } else {
+                showToast(data.error || 'Initialization failed', 'error');
+            }
+        } catch (err) {
+            showToast('Network error initializing dataset', 'error');
+        } finally {
+            setIsInitializingMaster(false);
+        }
     };
 
     const handleDelete = async (id) => {
@@ -735,6 +761,9 @@ function AutoTunePanel() {
                 status: data.status,
                 progress: data.progress,
                 trialsRun: data.trialCount,
+                bestAccuracy: data.bestAccuracy,
+                bestMcc: data.bestMcc,
+                topTrials: data.log || [],
                 message: data.message || (data.status === 'CACHING' ? 'Building model score cache...' :
                     data.status === 'TUNING' ? 'Running exhaustive grid search...' :
                         data.status === 'COMPLETE' ? 'Tuning Complete!' : data.status)
@@ -820,32 +849,103 @@ function AutoTunePanel() {
                     <AnimatePresence>
                         {activeRunId && runProgress && (
                             <motion.div
-                                initial={{ height: 0, opacity: 0 }}
-                                animate={{ height: 'auto', opacity: 1 }}
-                                exit={{ height: 0, opacity: 0 }}
+                                initial={{ height: 0, opacity: 0, y: -20 }}
+                                animate={{ height: 'auto', opacity: 1, y: 0 }}
+                                exit={{ height: 0, opacity: 0, y: -20 }}
                                 className="overflow-hidden"
                             >
-                                <div className="bg-navy rounded-2xl p-6 text-white shadow-xl relative overflow-hidden mb-6">
-                                    <div className="absolute top-0 left-0 w-full h-1 bg-white/10">
-                                        <div
-                                            className="h-full bg-accent-cyan transition-all duration-300 ease-out"
-                                            style={{ width: `${runProgress.progress || 0}%` }}
+                                <div className="bg-navy rounded-3xl p-8 text-white shadow-2xl relative overflow-hidden mb-10 border border-white/10">
+                                    {/* Animated background pulse */}
+                                    <div className="absolute inset-0 bg-gradient-to-br from-accent-purple/20 to-accent-cyan/10 opacity-30 animate-pulse" />
+
+                                    {/* Progress Track */}
+                                    <div className="absolute top-0 left-0 w-full h-1.5 bg-white/5">
+                                        <motion.div
+                                            className="h-full bg-gradient-to-r from-accent-purple via-accent-cyan to-accent-purple bg-[length:200%_100%] animate-shimmer"
+                                            initial={{ width: 0 }}
+                                            animate={{ width: `${runProgress.progress || 0}%` }}
+                                            transition={{ duration: 1, ease: "easeOut" }}
                                         />
                                     </div>
-                                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                                        <div>
-                                            <h3 className="font-bold text-lg flex items-center gap-2 text-accent-cyan">
-                                                <Zap className="w-5 h-5 animate-pulse" />
-                                                Tuning Engine Running
-                                            </h3>
-                                            <p className="text-sm text-silver mt-1">{runProgress.message}</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <div className="text-2xl font-black font-mono">
-                                                {runProgress.trialsRun ? runProgress.trialsRun.toLocaleString() : '---'}
+
+                                    <div className="relative z-10">
+                                        <div className="flex flex-col lg:flex-row justify-between items-start gap-8">
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-3 mb-4">
+                                                    <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center ring-1 ring-white/20">
+                                                        <Zap className="w-6 h-6 text-accent-cyan animate-pulse" />
+                                                    </div>
+                                                    <div>
+                                                        <h3 className="text-xl font-black text-white tracking-tight flex items-center gap-2">
+                                                            Persistent Tuning Engine
+                                                            <span className="px-2 py-0.5 rounded-full bg-accent-cyan/20 text-accent-cyan text-[10px] uppercase tracking-widest border border-accent-cyan/30">Active Run</span>
+                                                        </h3>
+                                                        <p className="text-sm text-silver font-medium">{runProgress.message}</p>
+                                                    </div>
+                                                </div>
+
+                                                {/* Mini Stepper */}
+                                                <div className="flex items-center gap-4 mt-6">
+                                                    {[
+                                                        { id: 'CACHING', label: 'Caching' },
+                                                        { id: 'TUNING', label: 'Optimization' },
+                                                        { id: 'COMPLETE', label: 'Finish' }
+                                                    ].map((step, idx) => {
+                                                        const isDone = ['COMPLETE', 'FAILED'].includes(runProgress.status) || (runProgress.status === 'TUNING' && step.id === 'CACHING');
+                                                        const isCurrent = runProgress.status === step.id;
+
+                                                        return (
+                                                            <div key={step.id} className="flex items-center gap-2">
+                                                                <div className={`w-2.5 h-2.5 rounded-full transition-all duration-500 ${isDone ? 'bg-score-human' : isCurrent ? 'bg-accent-cyan shadow-[0_0_10px_rgba(34,211,238,0.5)] scale-110' : 'bg-white/10'}`} />
+                                                                <span className={`text-[10px] uppercase tracking-widest font-bold ${isDone || isCurrent ? 'text-white' : 'text-white/30'}`}>{step.label}</span>
+                                                                {idx < 2 && <div className="w-8 h-px bg-white/5" />}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
                                             </div>
-                                            <div className="text-xs text-silver uppercase tracking-wider font-bold">Configs Eval'd</div>
+
+                                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-6 lg:border-l lg:border-white/10 lg:pl-8">
+                                                <div>
+                                                    <div className="text-[10px] uppercase font-bold text-silver tracking-widest mb-1">Evaluated</div>
+                                                    <div className="text-2xl font-mono font-black text-white">
+                                                        {runProgress.trialsRun ? runProgress.trialsRun.toLocaleString() : '---'}
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-[10px] uppercase font-bold text-silver tracking-widest mb-1">Peak Acc</div>
+                                                    <div className="text-2xl font-mono font-black text-score-human">
+                                                        {runProgress.bestAccuracy ? `${runProgress.bestAccuracy}%` : '---'}
+                                                    </div>
+                                                </div>
+                                                <div className="hidden sm:block">
+                                                    <div className="text-[10px] uppercase font-bold text-silver tracking-widest mb-1">Peak MCC</div>
+                                                    <div className="text-2xl font-mono font-black text-accent-purple">
+                                                        {runProgress.bestMcc || '---'}
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
+
+                                        {/* mini Live Log */}
+                                        {runProgress.status === 'TUNING' && runProgress.topTrials?.length > 0 && (
+                                            <motion.div
+                                                initial={{ opacity: 0, y: 10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                className="mt-8 pt-6 border-t border-white/5"
+                                            >
+                                                <h4 className="text-[10px] font-bold text-silver uppercase tracking-[0.2em] mb-4">Live Discovery Feed</h4>
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                                                    {runProgress.topTrials.slice(0, 5).map((trial, i) => (
+                                                        <div key={i} className="bg-white/5 border border-white/10 rounded-xl p-3 flex flex-col items-center group hover:bg-white/10 transition-colors">
+                                                            <div className="text-[10px] font-mono font-bold text-accent-cyan mb-1">Trial {i + 1}</div>
+                                                            <div className="text-lg font-black text-white">{trial.accuracy}%</div>
+                                                            <div className="text-[9px] font-bold text-silver uppercase">MCC: {trial.mcc}</div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </motion.div>
+                                        )}
                                     </div>
                                 </div>
                             </motion.div>
@@ -855,12 +955,33 @@ function AutoTunePanel() {
                     {isLoading ? (
                         <div className="text-center py-10 text-ash text-sm font-bold animate-pulse">Loading datasets...</div>
                     ) : datasets.length === 0 ? (
-                        <div className="text-center py-16 border-2 border-dashed border-silver rounded-2xl">
+                        <div className="text-center py-16 border-2 border-dashed border-silver rounded-2xl flex flex-col items-center">
                             <Zap className="w-12 h-12 text-silver mx-auto mb-4" />
                             <h3 className="text-lg font-bold text-navy mb-2">No Training Datasets</h3>
-                            <p className="text-sm text-ash max-w-md mx-auto">
+                            <p className="text-sm text-ash max-w-md mx-auto mb-8">
                                 Upload a JSON dataset containing an array of objects with <code className="text-xs bg-surface px-1.5 py-0.5 rounded text-navy">text</code> and <code className="text-xs bg-surface px-1.5 py-0.5 rounded text-navy">label</code> ("human" or "ai").
                             </p>
+
+                            {hasLocalDataset && (
+                                <motion.button
+                                    whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                                    onClick={handleInitializeMaster}
+                                    disabled={isInitializingMaster}
+                                    className="flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-accent-purple to-accent-pink text-white rounded-2xl font-black shadow-lg hover:shadow-xl transition-all disabled:opacity-50"
+                                >
+                                    {isInitializingMaster ? (
+                                        <>
+                                            <RotateCcw className="w-5 h-5 animate-spin" />
+                                            Initializing Master Dataset...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <ShieldCheck className="w-5 h-5" />
+                                            Initialize Master Dataset (from local JSON)
+                                        </>
+                                    )}
+                                </motion.button>
+                            )}
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 gap-6">

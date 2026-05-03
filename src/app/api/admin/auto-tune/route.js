@@ -15,14 +15,36 @@ export async function POST(req) {
 
     try {
         const body = await req.json();
-        const { name, samples } = body;
+        const { name, samples, source } = body;
+        const prisma = getPrisma();
 
-        if (!name || !samples || !Array.isArray(samples) || samples.length === 0) {
-            return NextResponse.json({ error: 'Name and a non-empty samples array are required' }, { status: 400 });
+        let finalSamples = [];
+        let finalName = name;
+
+        if (source === 'local') {
+            // Priority: Project Root, Fallback: Parent Dir
+            let datasetPath = path.join(process.cwd(), 'test_dataset.json');
+            if (!fs.existsSync(datasetPath)) {
+                datasetPath = path.join(process.cwd(), '..', 'test_dataset.json');
+            }
+
+            if (!fs.existsSync(datasetPath)) {
+                return NextResponse.json({ error: 'Local test_dataset.json not found' }, { status: 404 });
+            }
+
+            const fileContent = fs.readFileSync(datasetPath, 'utf8');
+            const allSamples = JSON.parse(fileContent);
+            finalSamples = allSamples.slice(0, 2000);
+            finalName = name || 'Master Dataset';
+        } else {
+            if (!name || !samples || !Array.isArray(samples) || samples.length === 0) {
+                return NextResponse.json({ error: 'Name and a non-empty samples array are required' }, { status: 400 });
+            }
+            finalSamples = samples;
         }
 
         // Validate samples have text and label
-        const validSamples = samples.filter(s =>
+        const validSamples = finalSamples.filter(s =>
             s.text && typeof s.text === 'string' && s.text.trim().length > 0 &&
             s.label && ['human', 'ai'].includes(s.label.toLowerCase())
         ).map(s => ({
@@ -40,10 +62,9 @@ export async function POST(req) {
         const humanCount = validSamples.filter(s => s.label === 'human').length;
         const aiCount = validSamples.filter(s => s.label === 'ai').length;
 
-        const prisma = getPrisma();
         const dataset = await prisma.tuningDataset.create({
             data: {
-                name,
+                name: finalName,
                 samples: validSamples,
                 sampleCount: validSamples.length,
             }
@@ -104,43 +125,6 @@ export async function GET(req) {
             datasetPath = path.join(process.cwd(), '..', 'test_dataset.json'); // Fallback: Parent Dir
         }
 
-        if (!masterExists && fs.existsSync(datasetPath)) {
-            console.log('📦 [Auto-Tune] Initializing Master Dataset from test_dataset.json...');
-            try {
-                // Load a robust subset (e.g., first 2000 samples) to prevent DB bloat
-                const fileContent = fs.readFileSync(datasetPath, 'utf8');
-                const allSamples = JSON.parse(fileContent);
-                const subset = allSamples.slice(0, 2000);
-
-                const newDataset = await prisma.tuningDataset.create({
-                    data: {
-                        name: 'Master Dataset',
-                        samples: subset,
-                        sampleCount: subset.length,
-                    },
-                    include: {
-                        runs: {
-                            orderBy: { createdAt: 'desc' },
-                            take: 1,
-                            select: {
-                                id: true,
-                                status: true,
-                                progress: true,
-                                bestAccuracy: true,
-                                bestMcc: true,
-                                trialCount: true,
-                                createdAt: true,
-                                completedAt: true,
-                            }
-                        }
-                    }
-                });
-                datasets.unshift(newDataset);
-            } catch (err) {
-                console.error('❌ [Auto-Tune] Failed to load Master Dataset:', err.message);
-            }
-        }
-
         const result = datasets.map(ds => {
             const samples = ds.samples || [];
             const humanCount = Array.isArray(samples) ? samples.filter(s => s.label === 'human').length : 0;
@@ -158,7 +142,10 @@ export async function GET(req) {
             };
         });
 
-        return NextResponse.json({ datasets: result });
+        return NextResponse.json({
+            datasets: result,
+            hasLocalDataset: fs.existsSync(datasetPath) && !masterExists
+        });
     } catch (error) {
         console.error('[Auto-Tune] GET error:', error);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
