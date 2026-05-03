@@ -34,7 +34,23 @@ export async function POST(req) {
 
             const fileContent = fs.readFileSync(datasetPath, 'utf8');
             const allSamples = JSON.parse(fileContent);
-            finalSamples = allSamples.slice(0, 2000);
+
+            // Smarter Sampling: Pick 2000 total (1000 Human, 1000 AI)
+            // To ensure diversity, we'll take top & bottom from each category
+            const humanPool = allSamples.filter(s => s.label?.toLowerCase() === 'human');
+            const aiPool = allSamples.filter(s => s.label?.toLowerCase() === 'ai');
+
+            const pickFromPool = (pool, count) => {
+                if (pool.length <= count) return pool;
+                const half = Math.floor(count / 2);
+                return [...pool.slice(0, half), ...pool.slice(-half)];
+            };
+
+            finalSamples = [
+                ...pickFromPool(humanPool, 1000),
+                ...pickFromPool(aiPool, 1000)
+            ];
+
             finalName = name || 'Master Dataset';
         } else {
             if (!name || !samples || !Array.isArray(samples) || samples.length === 0) {
