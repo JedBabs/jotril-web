@@ -173,6 +173,7 @@ model TuningRun {
   metrics      Json?     // {precision, recall, f1, confusionMatrix, perClassMetrics}
   trialCount   Int?      // Total configs evaluated
   log          Json?     // Top N trial summaries [{config, accuracy, mcc}]
+  message      String?   // Current activity status (e.g. "Analyzing linguistic patterns...")
   error        String?
   createdAt    DateTime  @default(now())
   completedAt  DateTime?

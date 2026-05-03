@@ -46,6 +46,9 @@ next-env.d.ts
 prisma/*.db
 prisma/*.db-journal
 
+# large datasets
+test_dataset.json
+
 # local gh-cli install (not part of the project)
 gh-cli/
 gh.zip

@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server';
 import getPrisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '../../auth/[...nextauth]/route';
+import fs from 'fs';
+import path from 'path';
 
 // ── POST: Upload a new training dataset ──────────────────────────────────
 export async function POST(req) {
@@ -73,6 +75,8 @@ export async function GET(req) {
 
     try {
         const prisma = getPrisma();
+
+        // 1. Check for "Master Dataset" and test_dataset.json file
         const datasets = await prisma.tuningDataset.findMany({
             include: {
                 runs: {
@@ -92,6 +96,50 @@ export async function GET(req) {
             },
             orderBy: { createdAt: 'desc' },
         });
+
+        const masterExists = datasets.some(ds => ds.name === 'Master Dataset');
+
+        let datasetPath = path.join(process.cwd(), 'test_dataset.json'); // Priority: Project Root
+        if (!fs.existsSync(datasetPath)) {
+            datasetPath = path.join(process.cwd(), '..', 'test_dataset.json'); // Fallback: Parent Dir
+        }
+
+        if (!masterExists && fs.existsSync(datasetPath)) {
+            console.log('📦 [Auto-Tune] Initializing Master Dataset from test_dataset.json...');
+            try {
+                // Load a robust subset (e.g., first 2000 samples) to prevent DB bloat
+                const fileContent = fs.readFileSync(datasetPath, 'utf8');
+                const allSamples = JSON.parse(fileContent);
+                const subset = allSamples.slice(0, 2000);
+
+                const newDataset = await prisma.tuningDataset.create({
+                    data: {
+                        name: 'Master Dataset',
+                        samples: subset,
+                        sampleCount: subset.length,
+                    },
+                    include: {
+                        runs: {
+                            orderBy: { createdAt: 'desc' },
+                            take: 1,
+                            select: {
+                                id: true,
+                                status: true,
+                                progress: true,
+                                bestAccuracy: true,
+                                bestMcc: true,
+                                trialCount: true,
+                                createdAt: true,
+                                completedAt: true,
+                            }
+                        }
+                    }
+                });
+                datasets.unshift(newDataset);
+            } catch (err) {
+                console.error('❌ [Auto-Tune] Failed to load Master Dataset:', err.message);
+            }
+        }
 
         const result = datasets.map(ds => {
             const samples = ds.samples || [];

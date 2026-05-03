@@ -621,10 +621,19 @@ function AutoTunePanel() {
     const [isUploading, setIsUploading] = useState(false);
     const [activeRunId, setActiveRunId] = useState(null);
     const [runProgress, setRunProgress] = useState(null);
+    const [isApplying, setIsApplying] = useState(null); // stores dataset ID being applied
+    const [isDeleting, setIsDeleting] = useState(null); // stores dataset ID being deleted
 
     useEffect(() => {
         fetchDatasets();
     }, []);
+
+    useEffect(() => {
+        const activeRun = datasets.find(ds => ds.latestRun && ['PENDING', 'CACHING', 'TUNING'].includes(ds.latestRun.status));
+        if (activeRun && !activeRunId) {
+            connectToRun(activeRun.id);
+        }
+    }, [datasets]);
 
     const fetchDatasets = async () => {
         try {
@@ -674,43 +683,84 @@ function AutoTunePanel() {
 
     const handleDelete = async (id) => {
         if (!confirm('Are you sure you want to delete this dataset?')) return;
+        setIsDeleting(id);
         try {
-            await fetch(`/api/admin/auto-tune?id=${id}`, { method: 'DELETE' });
-            fetchDatasets();
+            const res = await fetch(`/api/admin/auto-tune?id=${id}`, { method: 'DELETE' });
+            if (res.ok) {
+                showToast('Dataset deleted', 'success');
+                fetchDatasets();
+            } else {
+                showToast('Delete failed', 'error');
+            }
         } catch (err) {
             showToast('Delete failed', 'error');
+        } finally {
+            setIsDeleting(null);
         }
     };
 
-    const startTuning = (id) => {
+    const startTuning = async (id) => {
+        try {
+            const res = await fetch(`/api/admin/auto-tune/${id}/run`, { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                showToast('Tuning run started in background!', 'info');
+                connectToRun(id);
+            } else {
+                showToast(data.error || 'Startup failed', 'error');
+            }
+        } catch (err) {
+            showToast('Network error starting run', 'error');
+        }
+    };
+
+    const connectToRun = (id) => {
         setActiveRunId(id);
-        setRunProgress({ phase: 'STARTING', progress: 0, message: 'Initializing...' });
+        setRunProgress({ status: 'STARTING', progress: 0, message: 'Attaching to run...' });
 
         const eventSource = new EventSource(`/api/admin/auto-tune/${id}/run`);
 
-        eventSource.addEventListener('progress', (e) => {
+        eventSource.onmessage = (e) => {
             const data = JSON.parse(e.data);
-            setRunProgress(data);
-        });
 
-        eventSource.addEventListener('complete', (e) => {
-            eventSource.close();
-            setRunProgress(null);
-            setActiveRunId(null);
-            showToast('Tuning complete!', 'success');
-            fetchDatasets();
-        });
+            if (data.error) {
+                showToast(data.error, 'error');
+                eventSource.close();
+                setActiveRunId(null);
+                setRunProgress(null);
+                return;
+            }
 
-        eventSource.addEventListener('error', (e) => {
+            setRunProgress({
+                status: data.status,
+                progress: data.progress,
+                trialsRun: data.trialCount,
+                message: data.message || (data.status === 'CACHING' ? 'Building model score cache...' :
+                    data.status === 'TUNING' ? 'Running exhaustive grid search...' :
+                        data.status === 'COMPLETE' ? 'Tuning Complete!' : data.status)
+            });
+
+            if (data.status === 'COMPLETE' || data.status === 'FAILED') {
+                eventSource.close();
+                setTimeout(() => {
+                    setRunProgress(null);
+                    setActiveRunId(null);
+                    fetchDatasets();
+                }, 3000);
+            }
+        };
+
+        eventSource.onerror = (e) => {
+            console.error('SSE Error:', e);
             eventSource.close();
-            setRunProgress(null);
-            setActiveRunId(null);
-            showToast('Tuning run encountered an error', 'error');
-            fetchDatasets();
-        });
+            // Try to reconnect once? 
+            // setRunProgress(null);
+            // setActiveRunId(null);
+        };
     };
 
     const applyConfig = async (id) => {
+        setIsApplying(id);
         try {
             const res = await fetch(`/api/admin/auto-tune/${id}/apply`, { method: 'POST' });
             const data = await res.json();
@@ -720,9 +770,11 @@ function AutoTunePanel() {
                 setTimeout(() => window.location.reload(), 1500);
             } else {
                 showToast(data.error || 'Apply failed', 'error');
+                setIsApplying(null);
             }
         } catch (err) {
             showToast('Network error applying config', 'error');
+            setIsApplying(null);
         }
     };
 
@@ -846,16 +898,16 @@ function AutoTunePanel() {
                                             <div className="flex items-center gap-3">
                                                 <button
                                                     onClick={() => handleDelete(ds.id)}
-                                                    disabled={activeRunId === ds.id}
+                                                    disabled={activeRunId === ds.id || isDeleting === ds.id}
                                                     className="p-2 text-ash hover:text-score-ai bg-white rounded-full border border-silver transition-colors disabled:opacity-30"
                                                     title="Delete Dataset"
                                                 >
-                                                    <Trash2 className="w-4 h-4" />
+                                                    {isDeleting === ds.id ? <RotateCcw className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                                                 </button>
 
                                                 <button
                                                     onClick={() => startTuning(ds.id)}
-                                                    disabled={activeRunId !== null}
+                                                    disabled={activeRunId !== null || isDeleting !== null || isApplying !== null}
                                                     className="flex items-center gap-2 text-sm font-bold text-accent-purple bg-accent-purple/10 hover:bg-accent-purple/20 border border-accent-purple/20 !rounded-full px-5 py-2.5 transition-all disabled:opacity-40"
                                                 >
                                                     <Play className="w-4 h-4 fill-current" />
@@ -907,9 +959,20 @@ function AutoTunePanel() {
                                             <div className="flex justify-end">
                                                 <button
                                                     onClick={() => applyConfig(ds.id)}
-                                                    className="flex items-center gap-2 text-sm font-bold text-white bg-navy hover:bg-navy/80 rounded-xl px-6 py-2.5 transition-colors shadow-md"
+                                                    disabled={isApplying !== null || activeRunId !== null}
+                                                    className="flex items-center gap-2 text-sm font-bold text-white bg-navy hover:bg-navy/80 rounded-xl px-6 py-2.5 transition-colors shadow-md disabled:bg-ash/50"
                                                 >
-                                                    <Save className="w-4 h-4" /> Apply to Production Engine
+                                                    {isApplying === ds.id ? (
+                                                        <>
+                                                            <RotateCcw className="w-4 h-4 animate-spin" />
+                                                            Applying Configuration...
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Save className="w-4 h-4" />
+                                                            Apply to Production Engine
+                                                        </>
+                                                    )}
                                                 </button>
                                             </div>
                                         </div>

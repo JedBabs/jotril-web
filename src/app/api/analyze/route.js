@@ -101,7 +101,7 @@ export async function POST(req) {
                     await new Promise(r => setTimeout(r, 50));
 
                     // Batch-query the model
-                    sendEvent('progress', { progress: 40, step: "Vectorizing text chunks..." });
+                    sendEvent('progress', { progress: 40, step: "🔍 Distributed analysis across Jotril clusters..." });
                     const results = await batchQueryModel(
                         scenarios.map(s => s.text),
                         5,

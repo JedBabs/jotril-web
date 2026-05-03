@@ -103,7 +103,7 @@ export default function EnhancedAccountPortal() {
             return showToast("Please enter text or upload a file first.", "warning");
         }
 
-        openProcess("analyze", "Deep Scan Initialization", "Connecting to Jotril core...");
+        openProcess("analyze", "🔍 Jotril is analyzing linguistic patterns...", "Connecting to Jotril core...");
 
         try {
             let res;
