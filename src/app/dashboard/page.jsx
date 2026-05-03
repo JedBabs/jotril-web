@@ -52,7 +52,7 @@ export default function EnhancedAccountPortal() {
     const [devMode, setDevMode] = useState(false);
 
     // Analysis State
-    const { isActive, openProcess, simulateProgress, closeProcess } = useProcess();
+    const { isActive, openProcess, simulateProgress, updateProcess, closeProcess } = useProcess();
     const [results, setResults] = useState(null);
     const [breakdown, setBreakdown] = useState(null);
     const [overallLabel, setOverallLabel] = useState("");
@@ -105,18 +105,6 @@ export default function EnhancedAccountPortal() {
 
         openProcess("analyze", "Deep Scan Initialization", "Connecting to Jotril core...");
 
-        simulateProgress([
-            { progress: 20, duration: 800, step: "Extracting semantic tokens..." },
-            { progress: 50, duration: 1500, step: "Running burstiness calculations..." },
-            { progress: 80, duration: 2500, step: "Executing predictive layers..." },
-            { progress: 95, duration: 2000, step: "Finalizing confidence ratings..." },
-        ]);
-
-        setResults(null);
-        setColdStart(false);
-        setScannedFile(file);
-        setLastText(text || file?.name || "");
-
         try {
             let res;
             if (file) {
@@ -132,13 +120,13 @@ export default function EnhancedAccountPortal() {
                 });
             }
 
-            const data = await res.json();
-
             if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
                 if (data.type === "COLD_START") { setColdStart(true); closeProcess(); return; }
                 if (data.limitExceeded) {
                     showToast(data.error || "Quota limit exceeded. Please upgrade your tier.", "error");
                     closeProcess();
+                    setQuotaRefreshKey((k) => k + 1);
                     return;
                 }
                 showToast(data.error || "Analysis engine returned an error.", "error");
@@ -146,32 +134,69 @@ export default function EnhancedAccountPortal() {
                 return;
             }
 
-            if (data.chunks) {
-                setResults(data.chunks);
-                setBreakdown(data.breakdown || {});
-                setOverallLabel(data.overallLabel || "");
-                setSourceHtml(data.sourceHtml || null);
-                showToast(data.cached ? "Results loaded from cache!" : `Analysis complete!`, "success");
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
 
-                if (file) {
-                    try {
-                        const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
-                        libGen({
-                            filename: file.name,
-                            breakdown: data.breakdown || {},
-                            overallLabel: data.overallLabel || "",
-                            chunks: data.chunks,
-                            sentenceCount: data.chunks.length || 0,
-                            wordCount: data.chunks.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
-                            sourceHtml: data.sourceHtml || null
-                        });
-                        showToast("PDF report generated successfully", "success");
-                    } catch (err) {
-                        console.error('Error generating PDF:', err);
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // keep the last incomplete chunk in buffer
+
+                let currentEvent = null;
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        currentEvent = line.substring(7).trim();
+                    } else if (line.startsWith('data: ')) {
+                        const dataStr = line.substring(6).trim();
+                        if (!dataStr) continue;
+
+                        try {
+                            const data = JSON.parse(dataStr);
+
+                            if (currentEvent === 'progress') {
+                                updateProcess(data.progress, data.step);
+                            } else if (currentEvent === 'complete') {
+                                setResults(data.chunks);
+                                setBreakdown(data.breakdown || {});
+                                setOverallLabel(data.overallLabel || "");
+                                setSourceHtml(data.sourceHtml || null);
+                                showToast(data.cached ? "Results loaded from cache!" : `Analysis complete!`, "success");
+
+                                if (file) {
+                                    try {
+                                        const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
+                                        libGen({
+                                            filename: file.name,
+                                            breakdown: data.breakdown || {},
+                                            overallLabel: data.overallLabel || "",
+                                            chunks: data.chunks,
+                                            sentenceCount: data.chunks.length || 0,
+                                            wordCount: data.chunks.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
+                                            sourceHtml: data.sourceHtml || null
+                                        });
+                                        showToast("PDF report generated successfully", "success");
+                                    } catch (err) {
+                                        console.error('Error generating PDF:', err);
+                                    }
+                                }
+                            } else if (currentEvent === 'error') {
+                                if (data.type === "COLD_START") {
+                                    setColdStart(true);
+                                } else if (data.limitExceeded) {
+                                    showToast(data.error || "Quota limit exceeded.", "error");
+                                } else {
+                                    showToast(data.error || "Analysis engine returned an error.", "error");
+                                }
+                            }
+                        } catch (e) {
+                            console.error('Error parsing stream data', e);
+                        }
                     }
                 }
-            } else {
-                showToast("No results returned from the analysis engine.", "error");
             }
             setQuotaRefreshKey(k => k + 1);
             // Refresh dashboard data too
@@ -226,6 +251,7 @@ export default function EnhancedAccountPortal() {
                         <div className="h-8 w-px bg-silver hidden md:block" />
                         <motion.button
                             whileHover={{ x: -2 }}
+                            whileTap={{ scale: 0.95 }}
                             onClick={() => router.push('/')}
                             className="flex items-center gap-2 text-sm font-bold text-ash hover:text-navy transition-colors"
                         >
@@ -245,12 +271,14 @@ export default function EnhancedAccountPortal() {
                             <p className="text-sm font-black text-navy">{stats?.email}</p>
                         </div>
                         <ThemeSwitcher />
-                        <button
+                        <motion.button
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
                             onClick={() => signOut()}
                             className="p-3 glass-card !rounded-full text-ash hover:text-score-ai transition-colors"
                         >
                             <Lock className="w-4 h-4" />
-                        </button>
+                        </motion.button>
                     </div>
                 </header>
 
@@ -332,12 +360,14 @@ export default function EnhancedAccountPortal() {
                                             </div>
                                             <div className="flex gap-3">
                                                 {scannedFile && (
-                                                    <button
+                                                    <motion.button
+                                                        whileHover={{ scale: 1.05 }}
+                                                        whileTap={{ scale: 0.95 }}
                                                         onClick={async () => {
                                                             openProcess("download", "Generating Report PDF", "Compiling styles & layout...");
                                                             simulateProgress([
-                                                                { progress: 30, duration: 1000, step: "Extracting semantic tokens..." },
-                                                                { progress: 70, duration: 1500, step: "Executing predictive layers..." }
+                                                                { progress: 30, duration: 400, step: "Extracting semantic tokens..." },
+                                                                { progress: 70, duration: 600, step: "Executing predictive layers..." }
                                                             ]);
                                                             try {
                                                                 const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
@@ -357,14 +387,16 @@ export default function EnhancedAccountPortal() {
                                                         className="px-5 py-2.5 bg-gradient-to-tr from-accent-blue to-accent-purple text-white rounded-xl font-bold text-xs shadow-lg"
                                                     >
                                                         Download PDF
-                                                    </button>
+                                                    </motion.button>
                                                 )}
-                                                <button
+                                                <motion.button
+                                                    whileHover={{ scale: 1.05 }}
+                                                    whileTap={{ scale: 0.95 }}
                                                     onClick={() => setResults(null)}
                                                     className="px-5 py-2.5 glass-card rounded-xl font-bold text-xs"
                                                 >
                                                     New Scan
-                                                </button>
+                                                </motion.button>
 
                                                 {tier === 'ADMIN' && (
                                                     <motion.button
@@ -454,12 +486,14 @@ export default function EnhancedAccountPortal() {
                                                     </span>
                                                 </td>
                                                 <td className="p-5 text-right">
-                                                    <button
+                                                    <motion.button
+                                                        whileHover={{ scale: 1.05 }}
+                                                        whileTap={{ scale: 0.95 }}
                                                         onClick={async () => {
                                                             openProcess("download", "Generating Report PDF", "Compiling styles & layout...");
                                                             simulateProgress([
-                                                                { progress: 30, duration: 600, step: "Extracting semantic tokens..." },
-                                                                { progress: 70, duration: 800, step: "Executing predictive layers..." }
+                                                                { progress: 30, duration: 300, step: "Extracting semantic tokens..." },
+                                                                { progress: 70, duration: 400, step: "Executing predictive layers..." }
                                                             ]);
                                                             try {
                                                                 const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
@@ -478,7 +512,7 @@ export default function EnhancedAccountPortal() {
                                                         className="px-4 py-2 bg-gradient-to-tr from-accent-blue to-accent-purple text-white rounded-lg font-bold text-xs shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
                                                     >
                                                         Download PDF
-                                                    </button>
+                                                    </motion.button>
                                                 </td>
                                             </motion.tr>
                                         ))}
@@ -620,6 +654,7 @@ export default function EnhancedAccountPortal() {
                                 </ul>
                                 <motion.button
                                     whileHover={{ scale: 1.02, y: -2 }}
+                                    whileTap={{ scale: 0.95 }}
                                     className="w-full py-4 bg-navy text-white font-black rounded-2xl shadow-xl text-sm"
                                 >
                                     View Pricing Plans

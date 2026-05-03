@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 
 /**
  * Premium PDF Report Generator for Jotril AI — V2 Formatting Engine
@@ -68,11 +68,28 @@ function matchTextToChunkMap(targetText, fullAnalysisText, chunkMap) {
             continue;
         }
 
-        if (aPtr < chunkMap.length) {
-            result.push(chunkMap[aPtr]);
+        // Case-insensitive character comparison with limited forward-scan
+        // to handle encoding mismatches (curly quotes, em-dashes, ligatures, etc.)
+        if (aPtr < fullAnalysisText.length && tChar.toLowerCase() === fullAnalysisText[aPtr].toLowerCase()) {
+            result.push(chunkMap[aPtr] || 'human');
             aPtr++;
         } else {
-            result.push('human');
+            // Try scanning ahead up to 5 chars for a match (encoding drift recovery)
+            let found = false;
+            for (let scan = 1; scan <= 5 && aPtr + scan < fullAnalysisText.length; scan++) {
+                if (tChar.toLowerCase() === fullAnalysisText[aPtr + scan].toLowerCase()) {
+                    aPtr += scan;
+                    result.push(chunkMap[aPtr] || 'human');
+                    aPtr++;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                // Fallback: use nearest label and advance analysis pointer
+                result.push(chunkMap[Math.min(aPtr, chunkMap.length - 1)] || 'human');
+                aPtr++;
+            }
         }
     }
     return result;
@@ -292,7 +309,9 @@ function renderHtmlBody(doc, sourceHtml, chunks, startY, margin, pageWidth, page
 
     let y = startY;
     let globalCharIdx = 0;
-    const lineHeight = 6;
+    const lineHeight = 7;
+
+    let currentX = margin; // Track x across sibling text nodes
 
     function walkNode(node, fontStyle = "normal", fontSize = 10, indent = 0) {
         if (node.nodeType === 3) { // Text node
@@ -303,12 +322,13 @@ function renderHtmlBody(doc, sourceHtml, chunks, startY, margin, pageWidth, page
             }
 
             const labels = charLabels.slice(globalCharIdx, globalCharIdx + text.length);
-            const xStart = margin + indent;
+            const xStart = Math.max(margin + indent, currentX);
 
             const result = renderHighlightedText(doc, text, labels, {
                 x: xStart, y, margin: margin + indent, maxX, lineHeight, pageHeight, filename, fontStyle, fontSize
             });
             y = result.y;
+            currentX = result.x;
 
             globalCharIdx += text.length;
             return;
@@ -335,26 +355,28 @@ function renderHtmlBody(doc, sourceHtml, chunks, startY, margin, pageWidth, page
         // ─── Paragraphs ───
         if (tag === 'p') {
             y = ensureSpace(doc, y, lineHeight + 4, pageHeight, margin, filename);
+            currentX = margin + indent; // Reset x for new paragraph
             for (const child of node.childNodes) {
                 walkNode(child, fontStyle, fontSize, indent);
             }
-            y += 5;
+            y += 6;
+            currentX = margin + indent;
             return;
         }
 
         // ─── Unordered List ───
         if (tag === 'ul') {
-            y += 2;
+            y += 4;
             for (const child of node.childNodes) {
                 walkNode(child, fontStyle, fontSize, indent);
             }
-            y += 2;
+            y += 4;
             return;
         }
 
         // ─── Ordered List ───
         if (tag === 'ol') {
-            y += 2;
+            y += 4;
             let counter = 1;
             for (const child of node.childNodes) {
                 if (child.tagName?.toLowerCase() === 'li') {
@@ -362,14 +384,14 @@ function renderHtmlBody(doc, sourceHtml, chunks, startY, margin, pageWidth, page
                 }
                 walkNode(child, fontStyle, fontSize, indent);
             }
-            y += 2;
+            y += 4;
             return;
         }
 
         // ─── List Items ───
         if (tag === 'li') {
-            y = ensureSpace(doc, y, lineHeight + 2, pageHeight, margin, filename);
-            const bulletIndent = indent + 6;
+            y = ensureSpace(doc, y, lineHeight + 4, pageHeight, margin, filename);
+            const bulletIndent = indent + 8;
 
             doc.setFont("helvetica", "normal");
             doc.setFontSize(fontSize);
@@ -381,10 +403,12 @@ function renderHtmlBody(doc, sourceHtml, chunks, startY, margin, pageWidth, page
                 doc.text("•", margin + indent + 1, y);
             }
 
+            currentX = margin + bulletIndent;
             for (const child of node.childNodes) {
                 walkNode(child, fontStyle, fontSize, bulletIndent);
             }
-            y += 3;
+            y += 5;
+            currentX = margin + indent;
             return;
         }
 
@@ -435,7 +459,7 @@ function renderHtmlBody(doc, sourceHtml, chunks, startY, margin, pageWidth, page
                     });
                 });
 
-                doc.autoTable({
+                autoTable(doc, {
                     head: head,
                     body: body,
                     startY: y,
@@ -471,7 +495,7 @@ function renderHtmlBody(doc, sourceHtml, chunks, startY, margin, pageWidth, page
             return;
         }
 
-        // ─── Bold / Italic ───
+        // ─── Bold / Italic / Underline ───
         if (tag === 'strong' || tag === 'b') {
             for (const child of node.childNodes) {
                 walkNode(child, "bold", fontSize, indent);
@@ -484,10 +508,66 @@ function renderHtmlBody(doc, sourceHtml, chunks, startY, margin, pageWidth, page
             }
             return;
         }
+        if (tag === 'u') {
+            // jsPDF doesn't support underline natively, render children in bolditalic as visual cue
+            for (const child of node.childNodes) {
+                walkNode(child, "bolditalic", fontSize, indent);
+            }
+            return;
+        }
+
+        // ─── Subscript / Superscript ───
+        if (tag === 'sub' || tag === 'sup') {
+            for (const child of node.childNodes) {
+                walkNode(child, fontStyle, Math.max(7, fontSize - 2), indent);
+            }
+            return;
+        }
+
+        // ─── Blockquote ───
+        if (tag === 'blockquote') {
+            y += 4;
+            y = ensureSpace(doc, y, lineHeight + 6, pageHeight, margin, filename);
+            const quoteIndent = indent + 12;
+            // Draw subtle left bar
+            doc.setDrawColor(180, 190, 210);
+            doc.setLineWidth(1.5);
+            doc.line(margin + indent + 4, y - 3, margin + indent + 4, y + lineHeight + 2);
+            for (const child of node.childNodes) {
+                walkNode(child, "italic", fontSize, quoteIndent);
+            }
+            y += 4;
+            return;
+        }
+
+        // ─── Links (render as normal text) ───
+        if (tag === 'a') {
+            for (const child of node.childNodes) {
+                walkNode(child, fontStyle, fontSize, indent);
+            }
+            return;
+        }
+
+        // ─── Span (mammoth wraps many formats in spans) ───
+        if (tag === 'span') {
+            for (const child of node.childNodes) {
+                walkNode(child, fontStyle, fontSize, indent);
+            }
+            return;
+        }
+
+        // ─── Div / Section / Article (block-level containers) ───
+        if (tag === 'div' || tag === 'section' || tag === 'article') {
+            for (const child of node.childNodes) {
+                walkNode(child, fontStyle, fontSize, indent);
+            }
+            return;
+        }
 
         // ─── Line break ───
         if (tag === 'br') {
             y += lineHeight;
+            currentX = margin + indent;
             y = ensureSpace(doc, y, lineHeight, pageHeight, margin, filename);
             return;
         }

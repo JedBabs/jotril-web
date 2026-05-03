@@ -200,7 +200,7 @@ export default function Home() {
         setMounted(true);
     }, []);
 
-    const { isActive, openProcess, simulateProgress, closeProcess } = useProcess();
+    const { isActive, openProcess, simulateProgress, updateProcess, closeProcess } = useProcess();
     const [results, setResults] = useState(null);
     const [breakdown, setBreakdown] = useState(null);
     const [overallLabel, setOverallLabel] = useState("");
@@ -245,18 +245,6 @@ export default function Home() {
 
         openProcess("analyze", "Analyzing Scope", "Initializing Jotril Engine...");
 
-        simulateProgress([
-            { progress: 15, duration: 800, step: "Extracting semantic features..." },
-            { progress: 35, duration: 1500, step: "Vectorizing text chunks..." },
-            { progress: 65, duration: 2500, step: "Evaluating burstiness & complexity..." },
-            { progress: 85, duration: 2000, step: "Applying contextual smoothing..." },
-        ]);
-
-        setResults(null);
-        setColdStart(false);
-        setScannedFile(file);
-        setLastText(text || file?.name || "");
-
         try {
             let res;
             if (file) {
@@ -272,9 +260,8 @@ export default function Home() {
                 });
             }
 
-            const data = await res.json();
-
             if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
                 if (data.type === "COLD_START") { setColdStart(true); closeProcess(); return; }
                 if (data.limitExceeded) {
                     showToast(data.error || "Quota limit exceeded. Please upgrade your tier.", "error");
@@ -287,36 +274,73 @@ export default function Home() {
                 return;
             }
 
-            if (data.chunks) {
-                setResults(data.chunks);
-                setBreakdown(data.breakdown || {});
-                setOverallLabel(data.overallLabel || "");
-                setSourceHtml(data.sourceHtml || null);
-                if (data.cached) {
-                    showToast("Results loaded from cache — 0 points used!", "success");
-                } else {
-                    showToast(`Analysis complete! ${data.pointsCost || 0} points used.`, "success");
-                }
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
 
-                if (file) {
-                    try {
-                        const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
-                        libGen({
-                            filename: file.name,
-                            breakdown: data.breakdown || {},
-                            overallLabel: data.overallLabel || "",
-                            chunks: data.chunks,
-                            sentenceCount: data.chunks.length || 0,
-                            wordCount: data.chunks.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
-                            sourceHtml: data.sourceHtml || null
-                        });
-                        showToast("PDF report generated successfully", "success");
-                    } catch (err) {
-                        console.error('Error generating PDF:', err);
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // keep the last incomplete chunk in buffer
+
+                let currentEvent = null;
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        currentEvent = line.substring(7).trim();
+                    } else if (line.startsWith('data: ')) {
+                        const dataStr = line.substring(6).trim();
+                        if (!dataStr) continue;
+
+                        try {
+                            const data = JSON.parse(dataStr);
+
+                            if (currentEvent === 'progress') {
+                                updateProcess(data.progress, data.step);
+                            } else if (currentEvent === 'complete') {
+                                setResults(data.chunks);
+                                setBreakdown(data.breakdown || {});
+                                setOverallLabel(data.overallLabel || "");
+                                setSourceHtml(data.sourceHtml || null);
+                                if (data.cached) {
+                                    showToast("Results loaded from cache — 0 points used!", "success");
+                                } else {
+                                    showToast(`Analysis complete! ${data.pointsCost || 0} points used.`, "success");
+                                }
+
+                                if (file) {
+                                    try {
+                                        const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
+                                        libGen({
+                                            filename: file.name,
+                                            breakdown: data.breakdown || {},
+                                            overallLabel: data.overallLabel || "",
+                                            chunks: data.chunks,
+                                            sentenceCount: data.chunks.length || 0,
+                                            wordCount: data.chunks.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
+                                            sourceHtml: data.sourceHtml || null
+                                        });
+                                        showToast("PDF report generated successfully", "success");
+                                    } catch (err) {
+                                        console.error('Error generating PDF:', err);
+                                    }
+                                }
+                            } else if (currentEvent === 'error') {
+                                if (data.type === "COLD_START") {
+                                    setColdStart(true);
+                                } else if (data.limitExceeded) {
+                                    showToast(data.error || "Quota limit exceeded.", "error");
+                                } else {
+                                    showToast(data.error || "Analysis engine returned an error.", "error");
+                                }
+                            }
+                        } catch (e) {
+                            console.error('Error parsing stream data', e);
+                        }
                     }
                 }
-            } else {
-                showToast("No results returned from the analysis engine.", "error");
             }
             closeProcess();
             setQuotaRefreshKey((k) => k + 1);
@@ -599,8 +623,8 @@ export default function Home() {
                                             onClick={async () => {
                                                 openProcess("download", "Generating PDF", "Compiling styles & layout...");
                                                 simulateProgress([
-                                                    { progress: 30, duration: 1000, step: "Extracting Document Hierarchy..." },
-                                                    { progress: 70, duration: 1500, step: "Applying Analytics Markup..." }
+                                                    { progress: 30, duration: 300, step: "Extracting Document Hierarchy..." },
+                                                    { progress: 70, duration: 400, step: "Applying Analytics Markup..." }
                                                 ]);
                                                 try {
                                                     const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");

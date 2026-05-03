@@ -88,77 +88,138 @@ export async function POST(req) {
 
         console.log(`[Analyze] Processing ${scenarios.length} scenarios for ${totalSentences} sentences (${pointCost} pts)...`);
 
-        // Batch-query the model
-        const results = await batchQueryModel(
-            scenarios.map(s => s.text),
-            5,
-            500
-        );
+        const stream = new ReadableStream({
+            async start(controller) {
+                const encoder = new TextEncoder();
+                const sendEvent = (event, data) => {
+                    controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+                };
 
-        // Convert model results to 0-100 scores with confidence penalty for short fragments
-        const scores = results.map((result, idx) => {
-            if (!result) return 0;
+                try {
+                    sendEvent('progress', { progress: 20, step: "Extracting semantic features..." });
+                    // Small delay to ensure the frontend processes the early event quickly
+                    await new Promise(r => setTimeout(r, 50));
 
-            let score = result.aiScore * 100;
+                    // Batch-query the model
+                    sendEvent('progress', { progress: 40, step: "Vectorizing text chunks..." });
+                    const results = await batchQueryModel(
+                        scenarios.map(s => s.text),
+                        5,
+                        500
+                    );
 
-            // Confidence penalty for very short fragments (< 10 words)
-            const wordCount = scenarios[idx].text.split(/\s+/).length;
-            if (wordCount < 10) {
-                score = 50 + (score - 50) * 0.6;
+                    sendEvent('progress', { progress: 70, step: "Evaluating burstiness & complexity..." });
+
+                    // Convert model results to 0-100 scores with confidence penalty for short fragments
+                    const scores = results.map((result, idx) => {
+                        if (!result) return 0;
+
+                        let score = result.aiScore * 100;
+
+                        // Confidence penalty for very short fragments (< 10 words)
+                        const wordCount = scenarios[idx].text.split(/\s+/).length;
+                        if (wordCount < 10) {
+                            score = 50 + (score - 50) * 0.6;
+                        }
+
+                        return score;
+                    });
+
+                    // Fetch dynamic engine configuration from DB (cached)
+                    const engineCfg = await getEngineConfig();
+
+                    // Calculate document-level burstiness correction
+                    const burstinessNudge = calculateBurstinessNudge(docSentences, engineCfg);
+
+                    sendEvent('progress', { progress: 85, step: "Applying contextual smoothing..." });
+
+                    // Map scores back to individual sentences using the 3-signal differential engine
+                    const rawChunks = attributeScoresToSentences(
+                        docSentences,
+                        scenarios,
+                        scores,
+                        burstinessNudge,
+                        engineCfg
+                    );
+
+                    // Apply contextual smoothing
+                    const smoothedChunks = contextualSmooth(rawChunks, engineCfg);
+
+                    sendEvent('progress', { progress: 95, step: "Finalizing confidence ratings..." });
+
+                    // Classify into human/mixed/ai
+                    const { chunks: classifiedChunks, breakdown, overallLabel } = classifyResults(smoothedChunks, engineCfg);
+
+                    if (userId) {
+                        try {
+                            const prisma = getPrisma();
+                            await prisma.scanResult.create({
+                                data: {
+                                    userId,
+                                    filename: fileName,
+                                    type: requestType,
+                                    wordCount,
+                                    sentenceCount,
+                                    overallLabel,
+                                    breakdown,
+                                    chunks: classifiedChunks
+                                }
+                            });
+                        } catch (err) {
+                            console.error('[Analyze] Error saving ScanResult:', err);
+                        }
+                    }
+
+                    // Send final completion message
+                    sendEvent('complete', {
+                        success: true,
+                        chunks: classifiedChunks,
+                        breakdown,
+                        overallLabel,
+                        sourceHtml: sourceHtml || null,
+                        pointsCost: pointCost,
+                        cached: false,
+                    });
+
+                    controller.close();
+                } catch (error) {
+                    console.error('[Analyze Stream] Error:', error);
+
+                    if (error instanceof JotrilServiceError) {
+                        if (error.type === 'COLD_START') {
+                            sendEvent('error', {
+                                error: 'The Jotril V2 engine is warming up. Please try again in about 30 seconds.',
+                                type: 'COLD_START',
+                                retryAfter: error.retryAfter || 30
+                            });
+                        } else if (error.type === 'AUTH_ERROR') {
+                            sendEvent('error', {
+                                error: 'Authentication error with the analysis engine. Please contact support.',
+                                type: 'AUTH_ERROR'
+                            });
+                        } else if (error.type === 'RATE_LIMITED') {
+                            sendEvent('error', {
+                                error: 'The analysis engine is busy. Please try again in a moment.',
+                                type: 'RATE_LIMITED',
+                                retryAfter: error.retryAfter || 10
+                            });
+                        } else {
+                            sendEvent('error', { error: 'Analysis failed. Please try again.', type: 'MODEL_ERROR' });
+                        }
+                    } else {
+                        sendEvent('error', { error: 'Analysis failed. Please try again.', type: 'MODEL_ERROR' });
+                    }
+                    controller.close();
+                }
             }
-
-            return score;
         });
 
-        // Fetch dynamic engine configuration from DB (cached)
-        const engineCfg = await getEngineConfig();
-
-        // Calculate document-level burstiness correction
-        const burstinessNudge = calculateBurstinessNudge(docSentences, engineCfg);
-
-        // Map scores back to individual sentences using the 3-signal differential engine
-        const rawChunks = attributeScoresToSentences(
-            docSentences,
-            scenarios,
-            scores,
-            burstinessNudge,
-            engineCfg
-        );
-
-        // Apply contextual smoothing
-        const smoothedChunks = contextualSmooth(rawChunks, engineCfg);
-
-        // Classify into human/mixed/ai
-        const { chunks: classifiedChunks, breakdown, overallLabel } = classifyResults(smoothedChunks, engineCfg);
-
-        if (userId) {
-            try {
-                const prisma = getPrisma();
-                await prisma.scanResult.create({
-                    data: {
-                        userId,
-                        filename: fileName,
-                        type: requestType,
-                        wordCount,
-                        sentenceCount,
-                        overallLabel,
-                        breakdown,
-                        chunks: classifiedChunks
-                    }
-                });
-            } catch (err) {
-                console.error('[Analyze] Error saving ScanResult:', err);
+        return new Response(stream, {
+            headers: {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
             }
-        }
-
-        return NextResponse.json({
-            success: true,
-            chunks: classifiedChunks,
-            breakdown,
-            overallLabel,
-            sourceHtml: sourceHtml || null,
-            pointsCost: pointCost,
-            cached: false,
         });
 
     } catch (error) {
