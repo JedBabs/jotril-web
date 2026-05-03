@@ -148,3 +148,34 @@ model Session {
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
+
+// ── Auto-Tuning System ──────────────────────────────────────────────────
+
+model TuningDataset {
+  id          String   @id @default(uuid())
+  name        String
+  samples     Json     // [{text, label, format?}] — raw labeled documents/sentences
+  sampleCount Int
+  scoreCache  Json?    // Cached model scores per document — populated on first run
+  createdAt   DateTime @default(now())
+  runs        TuningRun[]
+}
+
+model TuningRun {
+  id           String    @id @default(uuid())
+  datasetId    String
+  dataset      TuningDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  status       String    @default("PENDING") // PENDING | CACHING | TUNING | COMPLETE | FAILED
+  progress     Int       @default(0)         // 0-100
+  bestConfig   Json?     // The winning engine config
+  bestAccuracy Float?
+  bestMcc      Float?    // Matthews Correlation Coefficient
+  metrics      Json?     // {precision, recall, f1, confusionMatrix, perClassMetrics}
+  trialCount   Int?      // Total configs evaluated
+  log          Json?     // Top N trial summaries [{config, accuracy, mcc}]
+  error        String?
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  @@index([datasetId])
+}

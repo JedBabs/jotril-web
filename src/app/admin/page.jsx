@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ShieldCheck, UserCog, Mail, Calendar, LogOut, CheckCircle, Plus, Undo2, RotateCcw, ChevronDown, ChevronRight, Save } from 'lucide-react';
+import { ShieldCheck, UserCog, Mail, Calendar, LogOut, CheckCircle, Plus, Undo2, RotateCcw, ChevronDown, ChevronRight, Save, Zap, Upload, Play, Check, Trash2, BarChart3, XCircle, AlertTriangle, ArrowRight } from 'lucide-react';
 import { useSession, signOut } from 'next-auth/react';
 import ToastContainer, { showToast } from '@/components/Toast';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -265,6 +265,9 @@ export default function AdminDashboardPage() {
 
                 {/* ═══ Engine Tuning Panel ═══ */}
                 <EngineTuningPanel />
+
+                {/* ═══ Auto-Tune Panel ═══ */}
+                <AutoTunePanel />
 
                 {/* Change Tier Modal */}
                 <AnimatePresence>
@@ -602,6 +605,325 @@ function EngineTuningPanel() {
                             </div>
                         </div>
                     </CollapsibleSection>
+                </div>
+            </div>
+        </motion.div>
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// AUTO-TUNE PANEL
+// ═══════════════════════════════════════════════════════════════════════
+
+function AutoTunePanel() {
+    const [datasets, setDatasets] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isUploading, setIsUploading] = useState(false);
+    const [activeRunId, setActiveRunId] = useState(null);
+    const [runProgress, setRunProgress] = useState(null);
+
+    useEffect(() => {
+        fetchDatasets();
+    }, []);
+
+    const fetchDatasets = async () => {
+        try {
+            const res = await fetch('/api/admin/auto-tune');
+            const data = await res.json();
+            setDatasets(data.datasets || []);
+            setIsLoading(false);
+        } catch (err) {
+            console.error('Failed to load datasets:', err);
+            setIsLoading(false);
+        }
+    };
+
+    const handleFileUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        setIsUploading(true);
+        const reader = new FileReader();
+
+        reader.onload = async (event) => {
+            try {
+                const json = JSON.parse(event.target.result);
+                const res = await fetch('/api/admin/auto-tune', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: file.name.replace('.json', ''), samples: json })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Dataset uploaded successfully', 'success');
+                    fetchDatasets();
+                } else {
+                    showToast(data.error || 'Upload failed', 'error');
+                }
+            } catch (err) {
+                showToast('Invalid JSON file', 'error');
+            } finally {
+                setIsUploading(false);
+                e.target.value = '';
+            }
+        };
+
+        reader.readAsText(file);
+    };
+
+    const handleDelete = async (id) => {
+        if (!confirm('Are you sure you want to delete this dataset?')) return;
+        try {
+            await fetch(`/api/admin/auto-tune?id=${id}`, { method: 'DELETE' });
+            fetchDatasets();
+        } catch (err) {
+            showToast('Delete failed', 'error');
+        }
+    };
+
+    const startTuning = (id) => {
+        setActiveRunId(id);
+        setRunProgress({ phase: 'STARTING', progress: 0, message: 'Initializing...' });
+
+        const eventSource = new EventSource(`/api/admin/auto-tune/${id}/run`);
+
+        eventSource.addEventListener('progress', (e) => {
+            const data = JSON.parse(e.data);
+            setRunProgress(data);
+        });
+
+        eventSource.addEventListener('complete', (e) => {
+            eventSource.close();
+            setRunProgress(null);
+            setActiveRunId(null);
+            showToast('Tuning complete!', 'success');
+            fetchDatasets();
+        });
+
+        eventSource.addEventListener('error', (e) => {
+            eventSource.close();
+            setRunProgress(null);
+            setActiveRunId(null);
+            showToast('Tuning run encountered an error', 'error');
+            fetchDatasets();
+        });
+    };
+
+    const applyConfig = async (id) => {
+        try {
+            const res = await fetch(`/api/admin/auto-tune/${id}/apply`, { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                showToast('Config applied to live engine!', 'success');
+                // Refresh the page to reload the config in the upper panel
+                setTimeout(() => window.location.reload(), 1500);
+            } else {
+                showToast(data.error || 'Apply failed', 'error');
+            }
+        } catch (err) {
+            showToast('Network error applying config', 'error');
+        }
+    };
+
+    return (
+        <motion.div
+            id="auto-tune"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+            className="mt-10"
+        >
+            <div className="glass-card rounded-[32px] overflow-hidden border border-accent-purple/20">
+                {/* Header */}
+                <div className="p-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 border-b border-accent-purple/20 bg-gradient-to-r from-accent-purple/5 to-transparent">
+                    <div>
+                        <div className="flex items-center gap-3 mb-1">
+                            <div className="w-10 h-10 bg-gradient-to-br from-accent-purple to-accent-pink rounded-xl flex items-center justify-center shadow-[0_4px_20px_rgba(168,85,247,0.3)]">
+                                <Zap className="w-5 h-5 text-white" />
+                            </div>
+                            <h2 className="text-2xl font-black text-navy">Auto-Tuner</h2>
+                        </div>
+                        <p className="text-sm text-ash font-medium">Data-driven parameter optimization via grid search over 50,000+ combinations.</p>
+                    </div>
+
+                    <div className="relative">
+                        <input
+                            type="file"
+                            accept=".json"
+                            onChange={handleFileUpload}
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+                            disabled={isUploading}
+                        />
+                        <button className="flex items-center gap-2 text-sm font-bold text-white bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-40 !rounded-full px-5 py-2.5 shadow-lg transition-all pointer-events-none">
+                            <Upload className="w-4 h-4" />
+                            {isUploading ? 'Uploading...' : 'Upload Dataset (JSON)'}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Body */}
+                <div className="p-8 space-y-6">
+                    {/* Active Run Banner */}
+                    <AnimatePresence>
+                        {activeRunId && runProgress && (
+                            <motion.div
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                className="overflow-hidden"
+                            >
+                                <div className="bg-navy rounded-2xl p-6 text-white shadow-xl relative overflow-hidden mb-6">
+                                    <div className="absolute top-0 left-0 w-full h-1 bg-white/10">
+                                        <div
+                                            className="h-full bg-accent-cyan transition-all duration-300 ease-out"
+                                            style={{ width: `${runProgress.progress || 0}%` }}
+                                        />
+                                    </div>
+                                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                        <div>
+                                            <h3 className="font-bold text-lg flex items-center gap-2 text-accent-cyan">
+                                                <Zap className="w-5 h-5 animate-pulse" />
+                                                Tuning Engine Running
+                                            </h3>
+                                            <p className="text-sm text-silver mt-1">{runProgress.message}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="text-2xl font-black font-mono">
+                                                {runProgress.trialsRun ? runProgress.trialsRun.toLocaleString() : '---'}
+                                            </div>
+                                            <div className="text-xs text-silver uppercase tracking-wider font-bold">Configs Eval'd</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+
+                    {isLoading ? (
+                        <div className="text-center py-10 text-ash text-sm font-bold animate-pulse">Loading datasets...</div>
+                    ) : datasets.length === 0 ? (
+                        <div className="text-center py-16 border-2 border-dashed border-silver rounded-2xl">
+                            <Zap className="w-12 h-12 text-silver mx-auto mb-4" />
+                            <h3 className="text-lg font-bold text-navy mb-2">No Training Datasets</h3>
+                            <p className="text-sm text-ash max-w-md mx-auto">
+                                Upload a JSON dataset containing an array of objects with <code className="text-xs bg-surface px-1.5 py-0.5 rounded text-navy">text</code> and <code className="text-xs bg-surface px-1.5 py-0.5 rounded text-navy">label</code> ("human" or "ai").
+                            </p>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 gap-6">
+                            {datasets.map(ds => (
+                                <div key={ds.id} className="border border-silver/50 rounded-2xl overflow-hidden hover:border-accent-purple/30 transition-colors">
+                                    <div className="p-6 bg-surface/30">
+                                        <div className="flex flex-col lg:flex-row justify-between lg:items-center gap-6">
+                                            {/* Dataset Info */}
+                                            <div className="flex items-start gap-4">
+                                                <div className="w-12 h-12 bg-white rounded-xl shadow-sm border border-silver flex items-center justify-center shrink-0">
+                                                    <BarChart3 className="w-6 h-6 text-accent-purple" />
+                                                </div>
+                                                <div>
+                                                    <h3 className="font-black text-navy text-lg">{ds.name}</h3>
+                                                    <div className="flex items-center gap-3 mt-2">
+                                                        <span className="text-xs font-bold text-ash bg-white border border-silver px-2 py-1 rounded-full">
+                                                            {ds.sampleCount} samples
+                                                        </span>
+                                                        <span className="text-xs font-bold text-score-human bg-score-human/10 px-2 py-1 rounded-full flex items-center gap-1">
+                                                            <Check className="w-3 h-3" /> {ds.humanCount} human
+                                                        </span>
+                                                        <span className="text-xs font-bold text-score-ai bg-score-ai/10 px-2 py-1 rounded-full flex items-center gap-1">
+                                                            <AlertTriangle className="w-3 h-3" /> {ds.aiCount} AI
+                                                        </span>
+                                                        {ds.hasCachedScores && (
+                                                            <span className="text-xs font-bold text-accent-cyan bg-accent-cyan/10 px-2 py-1 rounded-full">
+                                                                Scores Cached
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Actions */}
+                                            <div className="flex items-center gap-3">
+                                                <button
+                                                    onClick={() => handleDelete(ds.id)}
+                                                    disabled={activeRunId === ds.id}
+                                                    className="p-2 text-ash hover:text-score-ai bg-white rounded-full border border-silver transition-colors disabled:opacity-30"
+                                                    title="Delete Dataset"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+
+                                                <button
+                                                    onClick={() => startTuning(ds.id)}
+                                                    disabled={activeRunId !== null}
+                                                    className="flex items-center gap-2 text-sm font-bold text-accent-purple bg-accent-purple/10 hover:bg-accent-purple/20 border border-accent-purple/20 !rounded-full px-5 py-2.5 transition-all disabled:opacity-40"
+                                                >
+                                                    <Play className="w-4 h-4 fill-current" />
+                                                    Run Optimization
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Latest Run Results */}
+                                    {ds.latestRun && ds.latestRun.status === 'COMPLETE' && ds.latestRun.metrics && (
+                                        <div className="p-6 border-t border-silver/50 bg-white">
+                                            <div className="flex items-center justify-between mb-4">
+                                                <h4 className="text-xs font-black uppercase tracking-widest text-ash">Latest Results ({new Date(ds.latestRun.completedAt).toLocaleDateString()})</h4>
+                                                <span className="text-xs font-mono text-ash">{ds.latestRun.trialCount?.toLocaleString()} configs eval'd</span>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                                                <div className="p-4 border border-silver rounded-xl text-center">
+                                                    <div className="text-[10px] uppercase font-bold text-ash mb-1">Accuracy</div>
+                                                    <div className="text-2xl font-black text-navy">{ds.latestRun.bestAccuracy}%</div>
+                                                </div>
+                                                <div className="p-4 border border-accent-purple/20 bg-accent-purple/5 rounded-xl text-center shadow-[0_2px_10px_rgba(168,85,247,0.1)]">
+                                                    <div className="text-[10px] uppercase font-bold text-accent-purple mb-1">MCC Score</div>
+                                                    <div className="text-2xl font-black text-accent-purple">{ds.latestRun.bestMcc}</div>
+                                                </div>
+                                                <div className="col-span-1 md:col-span-2 p-4 border border-silver rounded-xl flex items-center justify-center gap-6">
+                                                    {/* Confusion Matrix Mini-View */}
+                                                    <div className="text-center">
+                                                        <div className="text-xs font-bold text-score-ai">True AI</div>
+                                                        <div className="text-xl font-mono font-black">{ds.latestRun.metrics.confusionMatrix.tp}</div>
+                                                    </div>
+                                                    <div className="text-center opacity-50">
+                                                        <div className="text-[10px] font-bold text-navy uppercase">False Human</div>
+                                                        <div className="text-sm font-mono font-bold">{ds.latestRun.metrics.confusionMatrix.fn}</div>
+                                                    </div>
+                                                    <div className="w-px h-8 bg-silver mx-2" />
+                                                    <div className="text-center">
+                                                        <div className="text-xs font-bold text-score-human">True Human</div>
+                                                        <div className="text-xl font-mono font-black">{ds.latestRun.metrics.confusionMatrix.tn}</div>
+                                                    </div>
+                                                    <div className="text-center opacity-50">
+                                                        <div className="text-[10px] font-bold text-navy uppercase">False AI</div>
+                                                        <div className="text-sm font-mono font-bold">{ds.latestRun.metrics.confusionMatrix.fp}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex justify-end">
+                                                <button
+                                                    onClick={() => applyConfig(ds.id)}
+                                                    className="flex items-center gap-2 text-sm font-bold text-white bg-navy hover:bg-navy/80 rounded-xl px-6 py-2.5 transition-colors shadow-md"
+                                                >
+                                                    <Save className="w-4 h-4" /> Apply to Production Engine
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {ds.latestRun && ds.latestRun.status === 'FAILED' && (
+                                        <div className="p-4 border-t text-sm font-bold text-score-ai bg-score-ai/5 flex items-center gap-2">
+                                            <XCircle className="w-5 h-5" /> Tuning run failed: {ds.latestRun.error}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             </div>
         </motion.div>
