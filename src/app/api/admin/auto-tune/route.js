@@ -120,10 +120,14 @@ export async function GET(req) {
 
         const masterExists = datasets.some(ds => ds.name === 'Master Dataset');
 
-        let datasetPath = path.join(process.cwd(), 'test_dataset.json'); // Priority: Project Root
-        if (!fs.existsSync(datasetPath)) {
-            datasetPath = path.join(process.cwd(), '..', 'test_dataset.json'); // Fallback: Parent Dir
-        }
+        const visibleFiles = fs.readdirSync(process.cwd());
+        const possiblePaths = [
+            path.join(process.cwd(), 'test_dataset.json'),
+            path.join(process.cwd(), 'jotril-web', 'test_dataset.json'),
+            path.join(process.cwd(), '..', 'test_dataset.json')
+        ];
+
+        let datasetPath = possiblePaths.find(p => fs.existsSync(p));
 
         const result = datasets.map(ds => {
             const samples = ds.samples || [];
@@ -144,7 +148,10 @@ export async function GET(req) {
 
         return NextResponse.json({
             datasets: result,
-            hasLocalDataset: fs.existsSync(datasetPath) && !masterExists
+            hasLocalDataset: !!datasetPath && !masterExists,
+            debugPath: datasetPath || 'None found',
+            cwd: process.cwd(),
+            visibleFiles: visibleFiles.slice(0, 10) // Show first 10 for safety
         });
     } catch (error) {
         console.error('[Auto-Tune] GET error:', error);

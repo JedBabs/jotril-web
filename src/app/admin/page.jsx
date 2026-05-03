@@ -624,6 +624,8 @@ function AutoTunePanel() {
     const [isApplying, setIsApplying] = useState(null); // stores dataset ID being applied
     const [isDeleting, setIsDeleting] = useState(null); // stores dataset ID being deleted
     const [hasLocalDataset, setHasLocalDataset] = useState(false);
+    const [debugPath, setDebugPath] = useState('');
+    const [visibleFiles, setVisibleFiles] = useState([]);
     const [isInitializingMaster, setIsInitializingMaster] = useState(false);
 
     useEffect(() => {
@@ -643,6 +645,8 @@ function AutoTunePanel() {
             const data = await res.json();
             setDatasets(data.datasets || []);
             setHasLocalDataset(data.hasLocalDataset || false);
+            setDebugPath(data.debugPath || '');
+            setVisibleFiles(data.visibleFiles || []);
             setIsLoading(false);
         } catch (err) {
             console.error('Failed to load datasets:', err);
@@ -981,6 +985,17 @@ function AutoTunePanel() {
                                         </>
                                     )}
                                 </motion.button>
+                            )}
+                            {!hasLocalDataset && (
+                                <div className="mt-4 px-4 py-3 bg-surface/50 rounded-xl text-left w-full max-w-md border border-silver/10 overflow-hidden">
+                                    <div className="text-[10px] text-ash font-bold uppercase tracking-widest mb-2">Diagnostic Scan</div>
+                                    <div className="text-[10px] text-navy font-mono mb-2 truncate">PATH: {debugPath === 'None found' ? 'Dataset not detected.' : debugPath}</div>
+                                    <div className="text-[10px] text-ash font-mono bg-white/50 p-2 rounded border border-silver/5 h-20 overflow-y-auto">
+                                        <div className="font-bold mb-1">Files seen by Node.js:</div>
+                                        {visibleFiles.map(f => <div key={f}>- {f}</div>)}
+                                        {visibleFiles.length === 0 && <div>(No files visible)</div>}
+                                    </div>
+                                </div>
                             )}
                         </div>
                     ) : (
