@@ -329,10 +329,10 @@ export function invalidateEngineConfigCache() {
  * @param {{score: number, type: string}[]} windowHits - All window scores for this sentence
  * @returns {number} 0-100 score
  */
-function computeDirectSignal(windowHits) {
+function computeDirectSignal(windowHits, cfg = SIGNAL_CONFIG) {
     if (windowHits.length === 0) return 0;
 
-    const conf = SIGNAL_CONFIG.windowConfidence;
+    const conf = cfg.windowConfidence || SIGNAL_CONFIG.windowConfidence;
     let weightedSum = 0;
     let weightTotal = 0;
 
@@ -366,8 +366,8 @@ function computeDirectSignal(windowHits) {
  * @param {number[]} allScores - Parallel scores array
  * @returns {number} 0-100 score (50 = neutral/no data)
  */
-function computeDifferentialSignal(sentenceIdx, scenarios, allScores) {
-    const conf = SIGNAL_CONFIG.windowConfidence;
+function computeDifferentialSignal(sentenceIdx, scenarios, allScores, cfg = SIGNAL_CONFIG) {
+    const conf = cfg.windowConfidence || SIGNAL_CONFIG.windowConfidence;
     const deltas = [];
 
     // Build index: which scenarios contain this sentence, which don't
@@ -468,9 +468,9 @@ function computeDifferentialSignal(sentenceIdx, scenarios, allScores) {
  * @param {{score: number, type: string}[]} windowHits - All window scores for this sentence
  * @returns {number} 0-100 score, or -1 if no anchor windows exist
  */
-function computeAnchorSignal(windowHits) {
-    const conf = SIGNAL_CONFIG.windowConfidence;
-    const threshold = SIGNAL_CONFIG.anchorThreshold;
+function computeAnchorSignal(windowHits, cfg = SIGNAL_CONFIG) {
+    const conf = cfg.windowConfidence || SIGNAL_CONFIG.windowConfidence;
+    const threshold = cfg.anchorThreshold ?? SIGNAL_CONFIG.anchorThreshold;
 
     const anchors = windowHits.filter(h => (conf[h.type] || 0) >= threshold);
 
@@ -537,9 +537,9 @@ export function attributeScoresToSentences(sentences, scenarios, scores, burstin
         }
 
         // ── Compute three signals ────────────────────────────────────
-        const directScore = computeDirectSignal(windowHits);
-        const differentialScore = computeDifferentialSignal(sentenceIdx, scenarios, adjustedScores);
-        const anchorScore = computeAnchorSignal(windowHits);
+        const directScore = computeDirectSignal(windowHits, cfg);
+        const differentialScore = computeDifferentialSignal(sentenceIdx, scenarios, adjustedScores, cfg);
+        const anchorScore = computeAnchorSignal(windowHits, cfg);
 
         // ── Blend signals using configured weights ───────────────────
         // If a signal returns -1, it has no data — exclude it from the blend

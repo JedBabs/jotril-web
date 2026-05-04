@@ -51,6 +51,7 @@ model ScanResult {
   createdAt     DateTime @default(now())
 
   @@index([userId])
+  @@index([createdAt])
 }
 
 model AnalysisRequest {

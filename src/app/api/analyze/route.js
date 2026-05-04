@@ -18,6 +18,7 @@ export async function POST(req) {
         let isDocumentRequest = false;
         let contentSize = 0;
         let fileName = null;
+        let sourceHtml = null;
 
         if (contentType.includes('multipart/form-data')) {
             isDocumentRequest = true;
@@ -36,7 +37,7 @@ export async function POST(req) {
             contentSize = buffer.byteLength;
             text = await extractTextFromDocument(buffer, file.type);
             // Also extract structured HTML for formatting-preserving PDF export
-            var sourceHtml = await extractHtmlFromDocument(buffer, file.type);
+            sourceHtml = await extractHtmlFromDocument(buffer, file.type);
         } else {
             const jsonBody = await req.json();
             text = jsonBody.text || '';
@@ -80,9 +81,6 @@ export async function POST(req) {
             }, { status: 403 });
         }
 
-        // Record usage immediately before processing
-        await recordQuotaUsage(hashIdentity, userId, requestType, contentSize, pointCost, sentenceCount, textHashValue, purchasedDeficit);
-
         // Generate all multi-scale analysis scenarios
         const { scenarios, sentences: docSentences, totalSentences } = generateAnalysisScenarios(text);
 
@@ -112,7 +110,7 @@ export async function POST(req) {
 
                     // Convert model results to 0-100 scores with confidence penalty for short fragments
                     const scores = results.map((result, idx) => {
-                        if (!result) return 0;
+                        if (!result) return null; // Mark failed results as null — they'll be excluded from scoring
 
                         let score = result.aiScore * 100;
 
@@ -124,6 +122,12 @@ export async function POST(req) {
 
                         return score;
                     });
+
+                    // Warn if some results failed (but don't crash — the pipeline handles nulls via windowing)
+                    const failCount = scores.filter(s => s === null).length;
+                    if (failCount > 0) {
+                        console.warn(`[Analyze] ${failCount}/${scores.length} model queries returned null — windowed scoring will compensate`);
+                    }
 
                     // Fetch dynamic engine configuration from DB (cached)
                     const engineCfg = await getEngineConfig();
@@ -149,6 +153,11 @@ export async function POST(req) {
 
                     // Classify into human/mixed/ai
                     const { chunks: classifiedChunks, breakdown, overallLabel } = classifyResults(smoothedChunks, engineCfg);
+
+                    // Record usage only AFTER successful analysis (prevents charging for failed model responses)
+                    await recordQuotaUsage(hashIdentity, userId, requestType, contentSize, pointCost, sentenceCount, textHashValue, purchasedDeficit).catch(err => {
+                        console.error('[Analyze] Error recording quota:', err);
+                    });
 
                     if (userId) {
                         try {

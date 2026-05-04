@@ -2,6 +2,8 @@ export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { queryJotrilModel, JotrilServiceError } from '@/lib/jotrilService';
 import getPrisma from '@/lib/prisma';
+import { checkQuota, recordQuotaUsage, hashText } from '@/lib/quota-manager';
+import { splitIntoSentences } from '@/lib/chunking';
 
 export async function POST(req) {
     try {
@@ -31,8 +33,32 @@ export async function POST(req) {
             return NextResponse.json({ error: 'Valid string literal "text" payload is required.' }, { status: 400 });
         }
 
+        // Apply Quota checks mirroring the frontend analyze route
+        const sentences = splitIntoSentences(text);
+        const sentenceCount = sentences.length;
+        const textHashValue = await hashText(text);
+
+        const deviceHash = 'API_KEY_' + keyRecord.id; // Unique identifier for API usage
+
+        const quotaCheck = await checkQuota(keyRecord.user.role, deviceHash, keyRecord.userId, 'TEXT', text.length, sentenceCount);
+        const pointCost = quotaCheck.pointCost;
+        const purchasedDeficit = quotaCheck.purchasedDeficit || 0;
+
+        if (!quotaCheck.allowed) {
+            return NextResponse.json({
+                error: quotaCheck.reason,
+                limitExceeded: true,
+                pointCost
+            }, { status: 429 });
+        }
+
         // Query the model using the shared service
         const result = await queryJotrilModel(text);
+
+        // Record successful usage
+        await recordQuotaUsage(deviceHash, keyRecord.userId, 'TEXT', text.length, pointCost, sentenceCount, textHashValue, purchasedDeficit).catch(err => {
+            console.error('[V1 API] Error recording quota:', err);
+        });
 
         return NextResponse.json({
             success: true,
@@ -55,6 +81,9 @@ export async function POST(req) {
             }
             if (error.type === 'AUTH_ERROR') {
                 return NextResponse.json({ error: 'Upstream model authentication failed.' }, { status: 502 });
+            }
+            if (error.type === 'RATE_LIMITED') {
+                return NextResponse.json({ error: 'Upstream model rate limit exceeded. Retry later.' }, { status: 429 });
             }
         }
 

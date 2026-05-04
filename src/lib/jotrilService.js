@@ -14,6 +14,26 @@ const SPACES = [
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 2000;
 
+// ── Gradio Client connection cache ─────────────────────────────────────
+// Reuses existing connections instead of reconnecting on every request
+// (~1-2 second saving per query). TTL auto-expires stale connections.
+const CLIENT_CACHE = new Map(); // Map<spaceName, { client, createdAt }>
+const CLIENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+async function getOrCreateClient(spaceName) {
+    const cached = CLIENT_CACHE.get(spaceName);
+    if (cached && (Date.now() - cached.createdAt) < CLIENT_CACHE_TTL_MS) {
+        return cached.client;
+    }
+
+    const client = await Client.connect(spaceName, {
+        hf_token: process.env.HF_TOKEN
+    });
+
+    CLIENT_CACHE.set(spaceName, { client, createdAt: Date.now() });
+    return client;
+}
+
 /**
  * Error types returned by the service for frontend-specific handling.
  */
@@ -31,7 +51,7 @@ export class JotrilServiceError extends Error {
  */
 function isColdStartError(error) {
     const text = error.message || String(error);
-    const markers = ['currently loading', 'building', 'is starting', 'is booting', 'sleeping', 'paused', 'starting', 'warming up'];
+    const markers = ['currently loading', 'building', 'is starting', 'is booting', 'sleeping', 'paused', 'starting', 'warming up', 'metadata could not be loaded', 'failed to fetch'];
     return markers.some(m => text.toLowerCase().includes(m.toLowerCase()));
 }
 
@@ -54,15 +74,16 @@ export async function queryJotrilModel(text, preferredSpace = null) {
     const selectedSpace = preferredSpace || SPACES[Math.floor(Math.random() * SPACES.length)];
     const otherSpace = SPACES.find(s => s !== selectedSpace);
 
-    console.log(`📡 [JotrilService] Sending request to: ${selectedSpace}`);
+    console.log(`📡 [JotrilService] [${preferredSpace ? 'DIRECT' : 'LOAD-BALANCED'}] Connecting to: ${selectedSpace}`);
 
     let lastError = null;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
-            // Connect to the Gradio Space
-            const app = await Client.connect(selectedSpace, {
-                hf_token: process.env.HF_TOKEN
+            // Connect to the Gradio Space (uses 5-min caching to avoid 1-2s negotiation overhead)
+            const app = await getOrCreateClient(selectedSpace).catch(err => {
+                console.error(`❌ [JotrilService] Connection failed to ${selectedSpace}:`, err.message || err);
+                throw err;
             });
 
             // Perform prediction
@@ -152,9 +173,11 @@ export async function batchQueryModel(texts, concurrency = 3, batchDelay = 300) 
 
     for (let i = 0; i < texts.length; i += concurrency) {
         const batch = texts.slice(i, i + concurrency);
-        const batchPromises = batch.map(async (text) => {
+        const batchPromises = batch.map(async (text, index) => {
             try {
-                return await queryJotrilModel(text);
+                // For batches (like in auto-tuning), we alternate spaces to ensure both clusters are fully utilized
+                const preferredSpace = SPACES[(i + index) % SPACES.length];
+                return await queryJotrilModel(text, preferredSpace);
             } catch (error) {
                 if (error instanceof JotrilServiceError &&
                     (error.type === 'COLD_START' || error.type === 'AUTH_ERROR')) {

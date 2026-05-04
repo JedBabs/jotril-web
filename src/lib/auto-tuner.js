@@ -91,32 +91,60 @@ export function prepareDocuments(rawSamples) {
 export async function buildScoreCache(documents, onProgress) {
     const cache = [];
     const totalDocs = documents.length;
+    const textDedup = new Map(); // Deduplicate identical scenario texts
 
     for (let i = 0; i < totalDocs; i++) {
         const doc = documents[i];
-        onProgress?.(Math.round((i / totalDocs) * 100), `Querying model for document ${i + 1}/${totalDocs}...`);
+        await onProgress?.(Math.round((i / totalDocs) * 100), `Querying model for document ${i + 1}/${totalDocs}...`);
 
         // Step 1: Generate all multi-scale analysis scenarios
         const { scenarios, sentences, totalSentences } = generateAnalysisScenarios(doc.text);
 
-        // Step 2: Query the model for all scenarios (the expensive part — done only once)
-        const results = await batchQueryModel(
-            scenarios.map(s => s.text),
-            5,   // concurrency
-            500  // batch delay
-        );
-
-        // Step 3: Convert model outputs to raw 0-100 scores
-        const scores = results.map((result, idx) => {
-            if (!result) return 0;
-            let score = result.aiScore * 100;
-
-            // Same confidence penalty as production pipeline
-            const wordCount = scenarios[idx].text.split(/\s+/).length;
-            if (wordCount < 10) {
-                score = 50 + (score - 50) * 0.6;
+        // Step 2: Deduplicate scenario texts across documents
+        const textsToQuery = [];
+        const queryMap = []; // Maps scenario index → deduplicated text index or cached score
+        for (let s = 0; s < scenarios.length; s++) {
+            const normalized = scenarios[s].text.trim().toLowerCase();
+            if (textDedup.has(normalized)) {
+                queryMap.push({ type: 'cached', score: textDedup.get(normalized) });
+            } else {
+                queryMap.push({ type: 'query', queryIdx: textsToQuery.length });
+                textsToQuery.push(scenarios[s].text);
             }
+        }
 
+        // Step 3: Query the model for new texts only
+        let rawResults = [];
+        if (textsToQuery.length > 0) {
+            rawResults = await batchQueryModel(textsToQuery, 5, 500);
+        }
+
+        // Step 4: Validate — if any result is null, the cache would be corrupted
+        const nullCount = rawResults.filter(r => !r).length;
+        if (nullCount > 0) {
+            throw new Error(
+                `Model returned ${nullCount}/${textsToQuery.length} failed results for document ${i + 1}. ` +
+                `This would corrupt the score cache. Check HuggingFace Space availability.`
+            );
+        }
+
+        // Step 5: Convert model outputs to raw 0-100 scores and cache dedup
+        const scores = queryMap.map((entry, idx) => {
+            let score;
+            if (entry.type === 'cached') {
+                score = entry.score;
+            } else {
+                const result = rawResults[entry.queryIdx];
+                score = result.aiScore * 100;
+                // Same confidence penalty as production pipeline
+                const wordCount = scenarios[idx].text.split(/\s+/).length;
+                if (wordCount < 10) {
+                    score = 50 + (score - 50) * 0.6;
+                }
+                // Cache for future deduplication
+                const normalized = scenarios[idx].text.trim().toLowerCase();
+                textDedup.set(normalized, score);
+            }
             return score;
         });
 
@@ -129,7 +157,7 @@ export async function buildScoreCache(documents, onProgress) {
         });
     }
 
-    onProgress?.(100, 'Model querying complete');
+    await onProgress?.(100, `Model querying complete (${textDedup.size} unique texts cached)`);
     return cache;
 }
 
@@ -328,12 +356,20 @@ function cloneConfig(cfg) {
  * @param {(progress: number, status: string, trialsRun: number) => void} onProgress
  * @returns {{ bestConfig, bestMetrics, trialCount, topTrials }}
  */
-export function runExhaustiveSearch(cache, onProgress) {
+export async function runExhaustiveSearch(cache, onProgress) {
     let bestConfig = getBaseConfig();
     let bestMetrics = evaluateConfig(cache, bestConfig);
     let bestScore = bestMetrics.mcc;
     let totalTrials = 0;
     const topTrials = []; // Keep top 20
+
+    // Helper: yield the event loop periodically to prevent blocking
+    const YIELD_EVERY = 500;
+    async function maybeYield() {
+        if (totalTrials % YIELD_EVERY === 0) {
+            await new Promise(resolve => setImmediate(resolve));
+        }
+    }
 
     function recordTrial(config, metrics) {
         totalTrials++;
@@ -355,7 +391,7 @@ export function runExhaustiveSearch(cache, onProgress) {
     }
 
     // ── PHASE 1: Coarse sweep of most impactful parameters ────────────
-    onProgress?.(0, 'Phase 1: Coarse sweep of primary parameters...', 0);
+    await onProgress?.(0, 'Phase 1: Coarse sweep of primary parameters...', 0);
 
     const primaryParams = [
         'signalWeights.direct',
@@ -375,6 +411,7 @@ export function runExhaustiveSearch(cache, onProgress) {
     // Cartesian product (capped to prevent explosion)
     const coarseCombos = cartesianProduct(primaryRanges);
     const coarseTotal = coarseCombos.length;
+    let lastProgressUpdate = Date.now();
 
     for (let i = 0; i < coarseTotal; i++) {
         const candidate = cloneConfig(bestConfig);
@@ -387,14 +424,18 @@ export function runExhaustiveSearch(cache, onProgress) {
 
         const metrics = evaluateConfig(cache, candidate);
         recordTrial(candidate, metrics);
+        await maybeYield();
 
-        if (i % 200 === 0) {
-            onProgress?.(Math.round((i / coarseTotal) * 33), `Phase 1: ${i}/${coarseTotal} combos (best MCC: ${bestScore.toFixed(4)})`, totalTrials);
+        // Time-based progress updates (at most every 2 seconds)
+        const now = Date.now();
+        if (now - lastProgressUpdate >= 2000 || i === coarseTotal - 1) {
+            await onProgress?.(Math.round((i / coarseTotal) * 33), `Phase 1: ${i}/${coarseTotal} combos (best MCC: ${bestScore.toFixed(4)})`, totalTrials);
+            lastProgressUpdate = now;
         }
     }
 
     // ── PHASE 2: Medium sweep around best across ALL parameters ───────
-    onProgress?.(33, 'Phase 2: Medium sweep around best region...', totalTrials);
+    await onProgress?.(33, 'Phase 2: Medium sweep around best region...', totalTrials);
 
     const allParams = Object.keys(PARAM_SPACE);
     const phase2Base = cloneConfig(bestConfig);
@@ -421,17 +462,15 @@ export function runExhaustiveSearch(cache, onProgress) {
 
             const metrics = evaluateConfig(cache, candidate);
             recordTrial(candidate, metrics);
+            await maybeYield();
         }
 
-        onProgress?.(
-            33 + Math.round(((allParams.indexOf(paramPath) + 1) / allParams.length) * 33),
-            `Phase 2: Sweeping ${paramPath} (best MCC: ${bestScore.toFixed(4)})`,
-            totalTrials
-        );
+        const paramProgress = 33 + Math.round(((allParams.indexOf(paramPath) + 1) / allParams.length) * 33);
+        await onProgress?.(paramProgress, `Phase 2: Sweeping ${paramPath} (best MCC: ${bestScore.toFixed(4)})`, totalTrials);
     }
 
     // ── PHASE 2.5: Pairwise interactions for top parameters ───────────
-    onProgress?.(66, 'Phase 2.5: Pairwise interaction sweep...', totalTrials);
+    await onProgress?.(66, 'Phase 2.5: Pairwise interaction sweep...', totalTrials);
 
     const interactionPairs = [
         ['signalWeights.direct', 'signalWeights.differential'],
@@ -472,10 +511,11 @@ export function runExhaustiveSearch(cache, onProgress) {
 
                 const metrics = evaluateConfig(cache, candidate);
                 recordTrial(candidate, metrics);
+                await maybeYield();
             }
         }
 
-        onProgress?.(
+        await onProgress?.(
             66 + Math.round(((pairIdx + 1) / interactionPairs.length) * 17),
             `Phase 2.5: Pair ${p1} × ${p2} (best MCC: ${bestScore.toFixed(4)})`,
             totalTrials
@@ -483,7 +523,7 @@ export function runExhaustiveSearch(cache, onProgress) {
     }
 
     // ── PHASE 3: Fine surgical sweep ±1 step around single best ───────
-    onProgress?.(83, 'Phase 3: Fine-grained refinement around best...', totalTrials);
+    await onProgress?.(83, 'Phase 3: Fine-grained refinement around best...', totalTrials);
 
     // Multiple refinement passes to catch cascading improvements
     for (let pass = 0; pass < 3; pass++) {
@@ -512,10 +552,11 @@ export function runExhaustiveSearch(cache, onProgress) {
                 const prevBest = bestScore;
                 recordTrial(candidate, metrics);
                 if (bestScore > prevBest) improved = true;
+                await maybeYield();
             }
         }
 
-        onProgress?.(
+        await onProgress?.(
             83 + Math.round(((pass + 1) / 3) * 17),
             `Phase 3 pass ${pass + 1}/3 (best MCC: ${bestScore.toFixed(4)})`,
             totalTrials
@@ -528,7 +569,7 @@ export function runExhaustiveSearch(cache, onProgress) {
     // Sort final top trials
     topTrials.sort((a, b) => b.mcc - a.mcc);
 
-    onProgress?.(100, `Complete! ${totalTrials} configs evaluated. Best MCC: ${bestScore.toFixed(4)}`, totalTrials);
+    await onProgress?.(100, `Complete! ${totalTrials} configs evaluated. Best MCC: ${bestScore.toFixed(4)}`, totalTrials);
 
     return {
         bestConfig,

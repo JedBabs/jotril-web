@@ -42,8 +42,13 @@ export async function POST(req) {
 
             const pickFromPool = (pool, count) => {
                 if (pool.length <= count) return pool;
-                const half = Math.floor(count / 2);
-                return [...pool.slice(0, half), ...pool.slice(-half)];
+                // Strided sampling: pick evenly spaced items across the full pool
+                const stride = pool.length / count;
+                const picked = [];
+                for (let i = 0; i < count; i++) {
+                    picked.push(pool[Math.floor(i * stride)]);
+                }
+                return picked;
             };
 
             finalSamples = [
@@ -191,6 +196,15 @@ export async function DELETE(req) {
         }
 
         const prisma = getPrisma();
+
+        // Guard: prevent deleting a dataset with an active tuning run
+        const activeRun = await prisma.tuningRun.findFirst({
+            where: { datasetId: id, status: { in: ['PENDING', 'CACHING', 'TUNING'] } }
+        });
+        if (activeRun) {
+            return NextResponse.json({ error: 'Cannot delete dataset while a tuning run is active' }, { status: 409 });
+        }
+
         await prisma.tuningDataset.delete({ where: { id } });
 
         return NextResponse.json({ success: true });

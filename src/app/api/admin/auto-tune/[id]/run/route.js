@@ -80,7 +80,7 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
             });
         }
 
-        // 3. Baseline
+        // 3. Baseline — evaluate current production config for before/after comparison
         const currentConfig = await getEngineConfig();
         const baselineConfig = {
             signalWeights: {
@@ -96,28 +96,36 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
         };
         const baselineMetrics = evaluateConfig(cache, baselineConfig);
 
-        // 4. Grid Search
+        // 4. Grid Search (now async — yields event loop and awaits progress callbacks)
         await prisma.tuningRun.update({
             where: { id: runId },
             data: { status: 'TUNING', progress: 0, message: '🧠 Optimizing 50,000+ configurations (Phase 2)...' }
         });
 
-        const searchResult = runExhaustiveSearch(cache, async (progress, status, trialsRun) => {
-            // Update DB every ~5% to reduce DB load
-            if (progress % 5 === 0 || progress === 100) {
-                await prisma.tuningRun.update({
-                    where: { id: runId },
-                    data: {
-                        progress,
-                        trialCount: trialsRun,
-                        log: searchResult.topTrials.slice(0, 10),
-                        message: `🧠 Running Phase 2 Sweep: ${progress}% complete`
-                    }
-                });
+        // Time-based throttle to avoid hammering the DB
+        let lastDbUpdate = Date.now();
+        const DB_UPDATE_INTERVAL_MS = 3000; // Update DB at most every 3 seconds
+
+        const searchResult = await runExhaustiveSearch(cache, async (progress, status, trialsRun) => {
+            const now = Date.now();
+            if (now - lastDbUpdate >= DB_UPDATE_INTERVAL_MS || progress === 100) {
+                lastDbUpdate = now;
+                try {
+                    await prisma.tuningRun.update({
+                        where: { id: runId },
+                        data: {
+                            progress,
+                            trialCount: trialsRun,
+                            message: `🧠 ${status}`
+                        }
+                    });
+                } catch (dbErr) {
+                    console.warn(`[Auto-Tune] Progress update failed (non-fatal):`, dbErr.message);
+                }
             }
         });
 
-        // 5. Finalize
+        // 5. Finalize — include baseline metrics for before/after comparison
         await prisma.tuningRun.update({
             where: { id: runId },
             data: {
@@ -126,21 +134,29 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
                 bestConfig: searchResult.bestConfig,
                 bestAccuracy: searchResult.bestMetrics.accuracy,
                 bestMcc: searchResult.bestMetrics.mcc,
-                metrics: searchResult.bestMetrics,
+                metrics: {
+                    ...searchResult.bestMetrics,
+                    baseline: baselineMetrics,
+                },
                 trialCount: searchResult.trialCount,
                 log: searchResult.topTrials,
                 completedAt: new Date(),
+                message: `✅ Complete! Accuracy: ${baselineMetrics.accuracy}% → ${searchResult.bestMetrics.accuracy}% | MCC: ${baselineMetrics.mcc} → ${searchResult.bestMetrics.mcc}`
             }
         });
 
-        console.log(`✅ [Auto-Tune] Background run ${runId} complete.`);
+        console.log(`✅ [Auto-Tune] Background run ${runId} complete. Baseline: ${baselineMetrics.accuracy}% → Best: ${searchResult.bestMetrics.accuracy}%`);
 
     } catch (error) {
         console.error(`❌ [Auto-Tune] Background run ${runId} failed:`, error);
-        await prisma.tuningRun.update({
-            where: { id: runId },
-            data: { status: 'FAILED', error: error.message }
-        });
+        try {
+            await prisma.tuningRun.update({
+                where: { id: runId },
+                data: { status: 'FAILED', error: error.message }
+            });
+        } catch (dbErr) {
+            console.error(`❌ [Auto-Tune] Failed to update run status:`, dbErr.message);
+        }
     }
 }
 

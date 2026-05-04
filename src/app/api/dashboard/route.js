@@ -20,17 +20,13 @@ export async function GET(req) {
 
         // Total analysis requests
         const totalRequests = await prisma.quotaUsage.count({
-            where: {
-                OR: [{ userId }]
-            }
+            where: { userId }
         });
 
         // Total points spent (all time)
         const totalPoints = await prisma.quotaUsage.aggregate({
             _sum: { pointsCost: true },
-            where: {
-                OR: [{ userId }]
-            }
+            where: { userId }
         });
 
         // API key count
@@ -46,9 +42,7 @@ export async function GET(req) {
 
         // Recent activity
         const recentScans = await prisma.quotaUsage.findMany({
-            where: {
-                OR: [{ userId }]
-            },
+            where: { userId },
             orderBy: { createdAt: 'desc' },
             take: 10,
             select: {
@@ -60,11 +54,21 @@ export async function GET(req) {
             }
         });
 
-        // Past scan results
+        // Past scan results — exclude massive 'chunks' JSON to keep response lightweight
         const pastScanResults = await prisma.scanResult.findMany({
             where: { userId },
             orderBy: { createdAt: 'desc' },
-            take: 10
+            take: 10,
+            select: {
+                id: true,
+                filename: true,
+                type: true,
+                wordCount: true,
+                sentenceCount: true,
+                overallLabel: true,
+                breakdown: true,
+                createdAt: true,
+            }
         });
 
         return NextResponse.json({

@@ -688,6 +688,40 @@ function AutoTunePanel() {
         reader.readAsText(file);
     };
 
+    // Handle seeding from the public /test_dataset.json file natively
+    const handleLoadInternalDataset = async () => {
+        try {
+            setIsUploading(true);
+
+            const res = await fetch('/test_dataset.json');
+            if (!res.ok) throw new Error('Could not fetch test_dataset.json from public directory.');
+
+            const data = await res.json();
+
+            const uploadRes = await fetch('/api/admin/auto-tune', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: 'Internal Baseline Dataset',
+                    samples: data
+                })
+            });
+
+            if (!uploadRes.ok) {
+                const errData = await uploadRes.json();
+                throw new Error(errData.error || 'Failed to upload internal dataset');
+            }
+
+            showToast('Internal dataset loaded successfully.', 'success');
+            fetchDatasets();
+        } catch (error) {
+            console.error('Upload error:', error);
+            showToast(error.message, 'error');
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
     const handleInitializeMaster = async () => {
         setIsInitializingMaster(true);
         try {
@@ -708,6 +742,20 @@ function AutoTunePanel() {
             showToast('Network error initializing dataset', 'error');
         } finally {
             setIsInitializingMaster(false);
+        }
+    };
+
+    const cancelRun = async (runId) => {
+        try {
+            setRunProgress(prev => prev ? { ...prev, message: 'Cancelling run...' } : null);
+            const res = await fetch(`/api/admin/auto-tune/${runId}/cancel`, { method: 'POST' });
+            if (!res.ok) throw new Error('Failed to cancel run');
+            showToast('Run cancelled successfully.', 'success');
+            setRunProgress(null);
+            setActiveRunId(null);
+            fetchDatasets();
+        } catch (error) {
+            showToast(error.message, 'error');
         }
     };
 
@@ -744,7 +792,7 @@ function AutoTunePanel() {
         }
     };
 
-    const connectToRun = (id) => {
+    const connectToRun = (id, retryCount = 0) => {
         setActiveRunId(id);
         setRunProgress({ status: 'STARTING', progress: 0, message: 'Attaching to run...' });
 
@@ -786,9 +834,19 @@ function AutoTunePanel() {
         eventSource.onerror = (e) => {
             console.error('SSE Error:', e);
             eventSource.close();
-            // Try to reconnect once? 
-            // setRunProgress(null);
-            // setActiveRunId(null);
+            // Auto-reconnect with exponential backoff (max 3 retries)
+            const MAX_RETRIES = 3;
+            if (retryCount < MAX_RETRIES) {
+                const delay = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s
+                console.log(`[SSE] Reconnecting in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
+                setRunProgress(prev => prev ? { ...prev, message: `Connection lost. Reconnecting (${retryCount + 1}/${MAX_RETRIES})...` } : prev);
+                setTimeout(() => connectToRun(id, retryCount + 1), delay);
+            } else {
+                showToast('Lost connection to tuning run. Refresh to check status.', 'error');
+                setRunProgress(null);
+                setActiveRunId(null);
+                fetchDatasets(); // Refresh to see if it completed while disconnected
+            }
         };
     };
 
@@ -832,17 +890,28 @@ function AutoTunePanel() {
                         <p className="text-sm text-ash font-medium">Data-driven parameter optimization via grid search over 50,000+ combinations.</p>
                     </div>
 
-                    <div className="relative">
-                        <input
-                            type="file"
-                            accept=".json"
-                            onChange={handleFileUpload}
-                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+                    <div className="flex gap-4 items-center">
+                        <div className="relative">
+                            <input
+                                type="file"
+                                accept=".json"
+                                onChange={handleFileUpload}
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+                                disabled={isUploading}
+                            />
+                            <button className="flex items-center gap-2 text-sm font-bold text-white bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-40 !rounded-full px-5 py-2.5 shadow-lg transition-all pointer-events-none">
+                                <Upload className="w-4 h-4" />
+                                {isUploading ? 'Uploading...' : 'Upload Dataset (JSON)'}
+                            </button>
+                        </div>
+
+                        <button
+                            onClick={handleLoadInternalDataset}
                             disabled={isUploading}
-                        />
-                        <button className="flex items-center gap-2 text-sm font-bold text-white bg-accent-purple hover:bg-accent-purple/90 disabled:opacity-40 !rounded-full px-5 py-2.5 shadow-lg transition-all pointer-events-none">
-                            <Upload className="w-4 h-4" />
-                            {isUploading ? 'Uploading...' : 'Upload Dataset (JSON)'}
+                            className="flex items-center gap-2 text-sm font-bold text-accent-cyan bg-accent-cyan/10 border border-accent-cyan/20 hover:bg-accent-cyan/20 disabled:opacity-40 !rounded-full px-5 py-2.5 shadow-lg transition-all"
+                        >
+                            <Database className="w-4 h-4" />
+                            Load Internal Dataset
                         </button>
                     </div>
                 </div>
@@ -875,17 +944,26 @@ function AutoTunePanel() {
                                     <div className="relative z-10">
                                         <div className="flex flex-col lg:flex-row justify-between items-start gap-8">
                                             <div className="flex-1">
-                                                <div className="flex items-center gap-3 mb-4">
-                                                    <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center ring-1 ring-white/20">
-                                                        <Zap className="w-6 h-6 text-accent-cyan animate-pulse" />
-                                                    </div>
+                                                <div className="flex justify-between items-center mb-6">
                                                     <div>
-                                                        <h3 className="text-xl font-black text-white tracking-tight flex items-center gap-2">
-                                                            Persistent Tuning Engine
-                                                            <span className="px-2 py-0.5 rounded-full bg-accent-cyan/20 text-accent-cyan text-[10px] uppercase tracking-widest border border-accent-cyan/30">Active Run</span>
+                                                        <h3 className="text-xl font-bold text-white mb-1">
+                                                            {runProgress.status === 'STARTING' && 'Initializing Tune-Up'}
+                                                            {runProgress.status === 'CACHING' && 'Building Score Cache'}
+                                                            {runProgress.status === 'TUNING' && 'Exhaustive Search In Progress'}
+                                                            {runProgress.status === 'COMPLETE' && 'Tuning Complete'}
+                                                            {runProgress.status === 'FAILED' && 'Tuning Failed'}
                                                         </h3>
-                                                        <p className="text-sm text-silver font-medium">{runProgress.message}</p>
+                                                        <p className="text-silver text-sm">{runProgress.message}</p>
                                                     </div>
+
+                                                    {(runProgress.status === 'STARTING' || runProgress.status === 'CACHING' || runProgress.status === 'TUNING') && (
+                                                        <button
+                                                            onClick={() => cancelRun(activeRunId)}
+                                                            className="px-4 py-2 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-lg font-bold text-sm transition-colors border border-red-500/20"
+                                                        >
+                                                            Force Stop
+                                                        </button>
+                                                    )}
                                                 </div>
 
                                                 {/* Mini Stepper */}
@@ -1070,6 +1148,26 @@ function AutoTunePanel() {
                                                     <div className="text-[10px] uppercase font-bold text-accent-purple mb-1">MCC Score</div>
                                                     <div className="text-2xl font-black text-accent-purple">{ds.latestRun.bestMcc}</div>
                                                 </div>
+                                                {/* Before/After Comparison */}
+                                                {ds.latestRun.metrics?.baseline && (
+                                                    <div className="col-span-1 md:col-span-2 p-4 border border-score-human/20 bg-score-human/5 rounded-xl">
+                                                        <div className="text-[10px] uppercase font-bold text-score-human mb-2">Improvement Over Baseline</div>
+                                                        <div className="grid grid-cols-2 gap-4">
+                                                            <div className="text-center">
+                                                                <div className="text-[9px] text-ash font-bold">Accuracy</div>
+                                                                <div className="text-sm font-mono font-bold text-navy">
+                                                                    {ds.latestRun.metrics.baseline.accuracy}% → <span className="text-score-human">{ds.latestRun.bestAccuracy}%</span>
+                                                                </div>
+                                                            </div>
+                                                            <div className="text-center">
+                                                                <div className="text-[9px] text-ash font-bold">MCC</div>
+                                                                <div className="text-sm font-mono font-bold text-navy">
+                                                                    {ds.latestRun.metrics.baseline.mcc} → <span className="text-accent-purple">{ds.latestRun.bestMcc}</span>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
                                                 <div className="col-span-1 md:col-span-2 p-4 border border-silver rounded-xl flex items-center justify-center gap-6">
                                                     {/* Confusion Matrix Mini-View */}
                                                     <div className="text-center">
