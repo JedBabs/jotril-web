@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import getPrisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '../../../../auth/[...nextauth]/route';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { invalidateEngineConfigCache } from '@/lib/chunking';
 
 // ── POST: Apply the best config from a completed tuning run ──────────────
