@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ShieldCheck, UserCog, Mail, Calendar, LogOut, CheckCircle, Plus, Undo2, RotateCcw, ChevronDown, ChevronRight, Save, Zap, Upload, Play, Check, Trash2, BarChart3, XCircle, AlertTriangle, ArrowRight } from 'lucide-react';
+import { ShieldCheck, UserCog, Mail, Calendar, LogOut, CheckCircle, Plus, Undo2, RotateCcw, ChevronDown, ChevronRight, Save, Zap, Upload, Play, Check, Trash2, BarChart3, XCircle, AlertTriangle, ArrowRight, Database } from 'lucide-react';
 import { useSession, signOut } from 'next-auth/react';
 import ToastContainer, { showToast } from '@/components/Toast';
 import { motion, AnimatePresence } from 'framer-motion';
