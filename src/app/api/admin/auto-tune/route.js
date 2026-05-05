@@ -21,7 +21,17 @@ export async function POST(req) {
         let finalSamples = [];
         let finalName = name;
 
-        if (source === 'local') {
+        if (source === 'split-public') {
+            for (let i = 1; i <= 4; i++) {
+                const chunkPath = path.join(process.cwd(), 'public', `tuning_baseline_part_${i}.json`);
+                if (!fs.existsSync(chunkPath)) {
+                    return NextResponse.json({ error: `Missing dataset part ${i}` }, { status: 404 });
+                }
+                const content = fs.readFileSync(chunkPath, 'utf8');
+                finalSamples.push(...JSON.parse(content));
+            }
+            finalName = name || 'Internal Baseline Dataset';
+        } else if (source === 'local') {
             // Priority: Project Root, Fallback: Parent Dir
             let datasetPath = path.join(process.cwd(), 'test_dataset.json');
             if (!fs.existsSync(datasetPath)) {

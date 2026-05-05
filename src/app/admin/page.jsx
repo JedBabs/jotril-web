@@ -688,34 +688,29 @@ function AutoTunePanel() {
         reader.readAsText(file);
     };
 
-    // Handle seeding from the public /test_dataset.json file natively
+    // Handle seeding from the split public files natively
     const handleLoadInternalDataset = async () => {
         try {
             setIsUploading(true);
-
-            const res = await fetch('/tuning_baseline.json');
-            if (!res.ok) throw new Error('Could not fetch tuning_baseline.json from public directory.');
-
-            const data = await res.json();
 
             const uploadRes = await fetch('/api/admin/auto-tune', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    name: 'Internal Baseline Dataset',
-                    samples: data
+                    source: 'split-public',
+                    name: 'Internal Baseline Dataset'
                 })
             });
 
             if (!uploadRes.ok) {
                 const errData = await uploadRes.json();
-                throw new Error(errData.error || 'Failed to upload internal dataset');
+                throw new Error(errData.error || 'Failed to initialize internal dataset');
             }
 
-            showToast('Internal dataset loaded successfully.', 'success');
+            showToast('Internal dataset initialized successfully.', 'success');
             fetchDatasets();
         } catch (error) {
-            console.error('Upload error:', error);
+            console.error('Initialization error:', error);
             showToast(error.message, 'error');
         } finally {
             setIsUploading(false);
