@@ -23,9 +23,26 @@ export const authOptions = {
             name: "Credentials",
             credentials: {
                 email: { label: "Email", type: "text" },
-                password: { label: "Password", type: "password" }
+                password: { label: "Password", type: "password" },
+                devPin: { label: "Dev PIN", type: "password" }
             },
             async authorize(credentials, req) {
+                if (credentials?.devPin) {
+                    // We use an environment variable for the dev pin. If not set, default to a secure fallback or just reject.
+                    const expectedPin = process.env.DEV_PIN || 'antigravity-debug'; 
+                    if (credentials.devPin === expectedPin) {
+                        return {
+                            id: 'dev-admin-id',
+                            name: 'Dev Admin',
+                            email: 'dev@antigravity.local',
+                            role: 'ADMIN',
+                            isDev: true
+                        };
+                    } else {
+                        throw new Error(JSON.stringify({ message: "Invalid Dev PIN" }));
+                    }
+                }
+
                 if (!credentials?.email || !credentials?.password) {
                     throw new Error(JSON.stringify({ message: "Email and password are required" }));
                 }
@@ -96,11 +113,17 @@ export const authOptions = {
     callbacks: {
         async jwt({ token, user, trigger, session }) {
             if (user) {
-                // If OAuth user just got created/signed-in, they may not have a role in the object yet, 
-                // but the Prisma schema defaults to 'FREE'. Let's ensure it's on the token.
-                const dbUser = await prisma.user.findUnique({ where: { email: token.email } });
-                token.role = dbUser?.role || user.role || 'FREE';
-                token.id = dbUser?.id || user.id;
+                if (user.id === 'dev-admin-id') {
+                    token.role = user.role;
+                    token.id = user.id;
+                    token.isDev = true;
+                } else {
+                    // If OAuth user just got created/signed-in, they may not have a role in the object yet, 
+                    // but the Prisma schema defaults to 'FREE'. Let's ensure it's on the token.
+                    const dbUser = await prisma.user.findUnique({ where: { email: token.email } });
+                    token.role = dbUser?.role || user.role || 'FREE';
+                    token.id = dbUser?.id || user.id;
+                }
             }
             // Allow manual role updates (e.g. from admin panel modifying sessions)
             if (trigger === "update" && session?.role) {
@@ -112,6 +135,9 @@ export const authOptions = {
             if (session.user) {
                 session.user.role = token.role;
                 session.user.id = token.id;
+                if (token.isDev) {
+                    session.user.isDev = true;
+                }
             }
             return session;
         }

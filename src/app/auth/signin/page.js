@@ -12,17 +12,23 @@ export default function SignInPage() {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [isDevMode, setIsDevMode] = useState(false);
+    const [devPin, setDevPin] = useState('');
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setIsLoading(true);
         setError('');
 
-        const res = await signIn('credentials', {
-            redirect: false,
-            email,
-            password
-        });
+        let credentials = { redirect: false };
+        if (isDevMode) {
+            credentials.devPin = devPin;
+        } else {
+            credentials.email = email;
+            credentials.password = password;
+        }
+
+        const res = await signIn('credentials', credentials);
 
         if (res?.error) {
             try {
@@ -91,59 +97,79 @@ export default function SignInPage() {
             >
                 <div className="glass-card rounded-2xl py-8 px-6 sm:px-10">
                     <form className="space-y-6" onSubmit={handleSubmit}>
-                        <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }}>
-                            <label htmlFor="email" className="block text-sm font-bold text-navy mb-1.5">
-                                Email address
-                            </label>
-                            <input
-                                id="email"
-                                name="email"
-                                type="email"
-                                autoComplete="email"
-                                required
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                className="block w-full px-4 py-3 border border-silver rounded-xl bg-white/50 placeholder-ash-light focus:outline-none focus:border-accent-blue focus:ring-2 focus:ring-accent-blue/10 transition-all text-navy font-medium"
-                                placeholder="you@example.com"
-                            />
-                        </motion.div>
+                        {!isDevMode ? (
+                            <>
+                                <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }}>
+                                    <label htmlFor="email" className="block text-sm font-bold text-navy mb-1.5">
+                                        Email address
+                                    </label>
+                                    <input
+                                        id="email"
+                                        name="email"
+                                        type="email"
+                                        autoComplete="email"
+                                        required={!isDevMode}
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                        className="block w-full px-4 py-3 border border-silver rounded-xl bg-white/50 placeholder-ash-light focus:outline-none focus:border-accent-blue focus:ring-2 focus:ring-accent-blue/10 transition-all text-navy font-medium"
+                                        placeholder="you@example.com"
+                                    />
+                                </motion.div>
 
-                        <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.25 }}>
-                            <label htmlFor="password" className="block text-sm font-bold text-navy mb-1.5">
-                                Password
-                            </label>
-                            <input
-                                id="password"
-                                name="password"
-                                type="password"
-                                autoComplete="current-password"
-                                required
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                className="block w-full px-4 py-3 border border-silver rounded-xl bg-white/50 placeholder-ash-light focus:outline-none focus:border-accent-blue focus:ring-2 focus:ring-accent-blue/10 transition-all text-navy font-medium"
-                                placeholder="••••••••"
-                            />
-                        </motion.div>
+                                <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.25 }}>
+                                    <label htmlFor="password" className="block text-sm font-bold text-navy mb-1.5">
+                                        Password
+                                    </label>
+                                    <input
+                                        id="password"
+                                        name="password"
+                                        type="password"
+                                        autoComplete="current-password"
+                                        required={!isDevMode}
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        className="block w-full px-4 py-3 border border-silver rounded-xl bg-white/50 placeholder-ash-light focus:outline-none focus:border-accent-blue focus:ring-2 focus:ring-accent-blue/10 transition-all text-navy font-medium"
+                                        placeholder="••••••••"
+                                    />
+                                </motion.div>
 
-                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }} className="flex items-center justify-between">
-                            <div className="flex items-center">
-                                <input
-                                    id="remember-me"
-                                    name="remember-me"
-                                    type="checkbox"
-                                    className="h-4 w-4 text-accent-blue focus:ring-accent-blue border-silver rounded cursor-pointer"
-                                />
-                                <label htmlFor="remember-me" className="ml-2 block text-sm text-ash font-medium cursor-pointer">
-                                    Remember me
+                                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }} className="flex items-center justify-between">
+                                    <div className="flex items-center">
+                                        <input
+                                            id="remember-me"
+                                            name="remember-me"
+                                            type="checkbox"
+                                            className="h-4 w-4 text-accent-blue focus:ring-accent-blue border-silver rounded cursor-pointer"
+                                        />
+                                        <label htmlFor="remember-me" className="ml-2 block text-sm text-ash font-medium cursor-pointer">
+                                            Remember me
+                                        </label>
+                                    </div>
+
+                                    <div className="text-sm">
+                                        <Link href="/auth/forgot-password" className="font-bold text-accent-blue hover:text-accent-blue-light transition-colors">
+                                            Forgot password?
+                                        </Link>
+                                    </div>
+                                </motion.div>
+                            </>
+                        ) : (
+                            <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }}>
+                                <label htmlFor="devPin" className="block text-sm font-bold text-navy mb-1.5">
+                                    Developer PIN
                                 </label>
-                            </div>
-
-                            <div className="text-sm">
-                                <Link href="/auth/forgot-password" className="font-bold text-accent-blue hover:text-accent-blue-light transition-colors">
-                                    Forgot password?
-                                </Link>
-                            </div>
-                        </motion.div>
+                                <input
+                                    id="devPin"
+                                    name="devPin"
+                                    type="password"
+                                    required={isDevMode}
+                                    value={devPin}
+                                    onChange={(e) => setDevPin(e.target.value)}
+                                    className="block w-full px-4 py-3 border border-score-ai/30 rounded-xl bg-score-ai/5 placeholder-ash-light focus:outline-none focus:border-score-ai focus:ring-2 focus:ring-score-ai/20 transition-all text-navy font-mono font-medium"
+                                    placeholder="Enter Dev PIN"
+                                />
+                            </motion.div>
+                        )}
 
                         {error && (
                             <motion.div
@@ -161,9 +187,13 @@ export default function SignInPage() {
                                 disabled={isLoading}
                                 whileHover={{ scale: 1.01 }}
                                 whileTap={{ scale: 0.98 }}
-                                className="w-full flex justify-center py-3.5 px-4 border border-transparent rounded-xl text-sm font-bold text-white bg-accent-blue hover:bg-accent-blue-light focus:outline-none focus:ring-4 focus:ring-accent-blue/20 transition-all disabled:opacity-50 disabled:shadow-none btn-shimmer shadow-[0_4px_14px_rgba(37,99,235,0.25)]"
+                                className={`w-full flex justify-center py-3.5 px-4 border border-transparent rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 disabled:shadow-none btn-shimmer ${
+                                    isDevMode
+                                        ? 'bg-score-ai hover:bg-score-ai/90 shadow-[0_4px_14px_rgba(239,68,68,0.25)] focus:ring-4 focus:ring-score-ai/20'
+                                        : 'bg-accent-blue hover:bg-accent-blue-light shadow-[0_4px_14px_rgba(37,99,235,0.25)] focus:ring-4 focus:ring-accent-blue/20'
+                                }`}
                             >
-                                {isLoading ? 'Signing in...' : 'Sign in'}
+                                {isLoading ? 'Signing in...' : isDevMode ? 'Enter Dev Mode' : 'Sign in'}
                             </motion.button>
                         </motion.div>
 
@@ -189,6 +219,20 @@ export default function SignInPage() {
                                     <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
                                 </svg>
                                 Continue with Google
+                            </button>
+                        </motion.div>
+                        
+                        {/* Developer Mode Toggle */}
+                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }} className="mt-4 text-center">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setIsDevMode(!isDevMode);
+                                    setError('');
+                                }}
+                                className="text-xs text-ash hover:text-navy transition-colors opacity-50 hover:opacity-100"
+                            >
+                                {isDevMode ? 'Back to regular login' : 'Developer Access'}
                             </button>
                         </motion.div>
                     </form>

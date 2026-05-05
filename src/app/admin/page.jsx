@@ -693,8 +693,8 @@ function AutoTunePanel() {
         try {
             setIsUploading(true);
 
-            const res = await fetch('/test_dataset.json');
-            if (!res.ok) throw new Error('Could not fetch test_dataset.json from public directory.');
+            const res = await fetch('/tuning_baseline.json');
+            if (!res.ok) throw new Error('Could not fetch tuning_baseline.json from public directory.');
 
             const data = await res.json();
 

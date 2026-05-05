@@ -26,12 +26,26 @@ async function getOrCreateClient(spaceName) {
         return cached.client;
     }
 
-    const client = await Client.connect(spaceName, {
-        hf_token: process.env.HF_TOKEN
-    });
-
-    CLIENT_CACHE.set(spaceName, { client, createdAt: Date.now() });
-    return client;
+    let lastErr;
+    for (let i = 0; i < 5; i++) {
+        try {
+            const client = await Client.connect(spaceName, {
+                hf_token: process.env.HF_TOKEN
+            });
+            CLIENT_CACHE.set(spaceName, { client, createdAt: Date.now() });
+            return client;
+        } catch (error) {
+            lastErr = error;
+            const msg = error.message || String(error);
+            if (msg.includes('metadata could not be loaded') || msg.includes('504') || msg.includes('503')) {
+                console.warn(`⏳ [JotrilService] Space ${spaceName} metadata not ready. Retrying in 10s (Attempt ${i + 1}/5)...`);
+                await new Promise(resolve => setTimeout(resolve, 10000));
+            } else {
+                throw error;
+            }
+        }
+    }
+    throw lastErr;
 }
 
 /**
@@ -62,7 +76,7 @@ function isColdStartError(error) {
  * @param {string|null} preferredSpace - Optional space to try first (used for retries)
  * @returns {Promise<{aiScore: number, humanScore: number, label: string, confidence: object, spaceUsed: string}>}
  */
-export async function queryJotrilModel(text, preferredSpace = null) {
+export async function queryJotrilModel(text, preferredSpace = null, triedSpaces = new Set()) {
     if (!process.env.HF_TOKEN) {
         throw new JotrilServiceError(
             'HF_TOKEN environment variable is not set. Add your HuggingFace token to .env',
@@ -72,7 +86,8 @@ export async function queryJotrilModel(text, preferredSpace = null) {
 
     // 1. Select a space (randomly or preferred)
     const selectedSpace = preferredSpace || SPACES[Math.floor(Math.random() * SPACES.length)];
-    const otherSpace = SPACES.find(s => s !== selectedSpace);
+    triedSpaces.add(selectedSpace);
+    const otherSpace = SPACES.find(s => !triedSpaces.has(s));
 
     console.log(`📡 [JotrilService] [${preferredSpace ? 'DIRECT' : 'LOAD-BALANCED'}] Connecting to: ${selectedSpace}`);
 
@@ -116,9 +131,9 @@ export async function queryJotrilModel(text, preferredSpace = null) {
                 console.warn(`⚠️ [JotrilService] ${selectedSpace} is warming up...`);
 
                 // If this space is warming up and we have another space, try the other one immediately
-                if (otherSpace && preferredSpace !== otherSpace) {
+                if (otherSpace) {
                     console.log(`🔄 [JotrilService] Swapping to fallback space: ${otherSpace}`);
-                    return queryJotrilModel(text, otherSpace);
+                    return queryJotrilModel(text, otherSpace, triedSpaces);
                 }
 
                 throw new JotrilServiceError(
@@ -130,9 +145,9 @@ export async function queryJotrilModel(text, preferredSpace = null) {
 
             // Handle Rate Limiting
             if (error.message?.includes('429')) {
-                if (otherSpace && preferredSpace !== otherSpace) {
+                if (otherSpace) {
                     console.log(`🔄 [JotrilService] Rate limited on ${selectedSpace}, swapping to fallback: ${otherSpace}`);
-                    return queryJotrilModel(text, otherSpace);
+                    return queryJotrilModel(text, otherSpace, triedSpaces);
                 }
                 throw new JotrilServiceError('Rate limited by HuggingFace.', 'RATE_LIMITED', 10);
             }
@@ -152,9 +167,9 @@ export async function queryJotrilModel(text, preferredSpace = null) {
     }
 
     // If all retries fail on the first space, try the other space as a last resort
-    if (otherSpace && preferredSpace !== otherSpace) {
+    if (otherSpace) {
         console.log(`🚨 [JotrilService] All retries failed on ${selectedSpace}. Final fallback to ${otherSpace}`);
-        return queryJotrilModel(text, otherSpace);
+        return queryJotrilModel(text, otherSpace, triedSpaces);
     }
 
     throw lastError instanceof JotrilServiceError ? lastError : new JotrilServiceError(lastError.message || 'Model prediction failed', 'MODEL_ERROR');
@@ -171,7 +186,8 @@ export async function queryJotrilModel(text, preferredSpace = null) {
 export async function batchQueryModel(texts, concurrency = 3, batchDelay = 300) {
     const results = [];
 
-    for (let i = 0; i < texts.length; i += concurrency) {
+    let i = 0;
+    while (i < texts.length) {
         const batch = texts.slice(i, i + concurrency);
         const batchPromises = batch.map(async (text, index) => {
             try {
@@ -180,19 +196,36 @@ export async function batchQueryModel(texts, concurrency = 3, batchDelay = 300) 
                 return await queryJotrilModel(text, preferredSpace);
             } catch (error) {
                 if (error instanceof JotrilServiceError &&
-                    (error.type === 'COLD_START' || error.type === 'AUTH_ERROR')) {
-                    throw error;
+                    (error.type === 'COLD_START' || error.type === 'RATE_LIMITED' || error.type === 'AUTH_ERROR')) {
+                    throw error; // Bubble up to while loop for retry
                 }
                 console.error('[JotrilService] Batch item failed:', error.message);
                 return null;
             }
         });
 
-        const batchResults = await Promise.all(batchPromises);
-        results.push(...batchResults);
+        try {
+            const batchResults = await Promise.all(batchPromises);
+            results.push(...batchResults);
+            
+            i += concurrency; // Advance to next batch only on success
 
-        if (i + concurrency < texts.length && batchDelay > 0) {
-            await new Promise(resolve => setTimeout(resolve, batchDelay));
+            if (i < texts.length && batchDelay > 0) {
+                await new Promise(resolve => setTimeout(resolve, batchDelay));
+            }
+        } catch (error) {
+            if (error instanceof JotrilServiceError && error.type === 'COLD_START') {
+                console.warn(`⏳ [JotrilService] Batch encountered COLD_START. Waiting 30s before retrying...`);
+                await new Promise(resolve => setTimeout(resolve, 30000));
+                // i is not incremented, so the exact same batch retries
+                continue;
+            } else if (error instanceof JotrilServiceError && error.type === 'RATE_LIMITED') {
+                console.warn(`⏳ [JotrilService] Batch encountered RATE_LIMITED. Waiting 10s before retrying...`);
+                await new Promise(resolve => setTimeout(resolve, 10000));
+                continue;
+            } else {
+                throw error; // Auth errors or unknown fatal errors
+            }
         }
     }
 
