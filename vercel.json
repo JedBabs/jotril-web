@@ -1,8 +1,8 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/keep-awake",
-      "schedule": "0 */12 * * *"
-    }
-  ]
+    "crons": [
+        {
+            "path": "/api/cron/keep-awake",
+            "schedule": "0 0 * * *"
+        }
+    ]
 }
