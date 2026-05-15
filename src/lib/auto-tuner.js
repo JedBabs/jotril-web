@@ -86,15 +86,18 @@ export function prepareDocuments(rawSamples) {
  *
  * @param {Array<{text: string, label: string}>} documents
  * @param {(progress: number, status: string) => void} onProgress
+ * @param {() => Promise<void>} checkCancel - Optional callback to throw if cancelled
  * @returns {Promise<Array<{scenarios, sentences, scores, label}>>}
  */
-export async function buildScoreCache(documents, onProgress) {
+export async function buildScoreCache(documents, onProgress, checkCancel = null) {
     const cache = [];
     const totalDocs = documents.length;
     const textDedup = new Map(); // Deduplicate identical scenario texts
 
     for (let i = 0; i < totalDocs; i++) {
         const doc = documents[i];
+        if (checkCancel) await checkCancel();
+
         await onProgress?.(Math.round((i / totalDocs) * 100), `Querying model for document ${i + 1}/${totalDocs}...`);
 
         // Step 1: Generate all multi-scale analysis scenarios
@@ -116,7 +119,7 @@ export async function buildScoreCache(documents, onProgress) {
         // Step 3: Query the model for new texts only
         let rawResults = [];
         if (textsToQuery.length > 0) {
-            rawResults = await batchQueryModel(textsToQuery, 5, 500);
+            rawResults = await batchQueryModel(textsToQuery, 5, 500, checkCancel);
         }
 
         // Step 4: Validate — if any result is null, the cache would be corrupted
@@ -157,6 +160,7 @@ export async function buildScoreCache(documents, onProgress) {
         });
     }
 
+    if (checkCancel) await checkCancel();
     await onProgress?.(100, `Model querying complete (${textDedup.size} unique texts cached)`);
     return cache;
 }

@@ -181,13 +181,19 @@ export async function queryJotrilModel(text, preferredSpace = null, triedSpaces 
  * @param {string[]} texts - Array of text strings to analyze
  * @param {number} concurrency - Max concurrent requests
  * @param {number} batchDelay - Delay between batches in ms
+ * @param {() => Promise<void>} checkCancel - Optional callback to throw if cancelled
  * @returns {Promise<Array<{aiScore: number, humanScore: number, label: string} | null>>}
  */
-export async function batchQueryModel(texts, concurrency = 3, batchDelay = 300) {
+export async function batchQueryModel(texts, concurrency = 3, batchDelay = 300, checkCancel = null) {
     const results = [];
+    const MAX_BATCH_RETRIES = 10;
 
     let i = 0;
+    let batchRetryCount = 0;
+
     while (i < texts.length) {
+        if (checkCancel) await checkCancel();
+
         const batch = texts.slice(i, i + concurrency);
         const batchPromises = batch.map(async (text, index) => {
             try {
@@ -207,21 +213,34 @@ export async function batchQueryModel(texts, concurrency = 3, batchDelay = 300) 
         try {
             const batchResults = await Promise.all(batchPromises);
             results.push(...batchResults);
-            
+
             i += concurrency; // Advance to next batch only on success
+            batchRetryCount = 0; // Reset retries on success
 
             if (i < texts.length && batchDelay > 0) {
                 await new Promise(resolve => setTimeout(resolve, batchDelay));
             }
         } catch (error) {
+            batchRetryCount++;
+            if (batchRetryCount > MAX_BATCH_RETRIES) {
+                throw new Error(`Batch failed after ${MAX_BATCH_RETRIES} retries. Jotril engine clusters may be permanently offline.`);
+            }
+
             if (error instanceof JotrilServiceError && error.type === 'COLD_START') {
-                console.warn(`⏳ [JotrilService] Batch encountered COLD_START. Waiting 30s before retrying...`);
-                await new Promise(resolve => setTimeout(resolve, 30000));
+                console.warn(`⏳ [JotrilService] Batch encountered COLD_START. Waiting 30s before retrying (${batchRetryCount}/${MAX_BATCH_RETRIES})...`);
+                // Sleep in 1s increments to allow fast cancellation
+                for (let sleepSec = 0; sleepSec < 30; sleepSec++) {
+                    if (checkCancel) await checkCancel();
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
                 // i is not incremented, so the exact same batch retries
                 continue;
             } else if (error instanceof JotrilServiceError && error.type === 'RATE_LIMITED') {
-                console.warn(`⏳ [JotrilService] Batch encountered RATE_LIMITED. Waiting 10s before retrying...`);
-                await new Promise(resolve => setTimeout(resolve, 10000));
+                console.warn(`⏳ [JotrilService] Batch encountered RATE_LIMITED. Waiting 10s before retrying (${batchRetryCount}/${MAX_BATCH_RETRIES})...`);
+                for (let sleepSec = 0; sleepSec < 10; sleepSec++) {
+                    if (checkCancel) await checkCancel();
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
                 continue;
             } else {
                 throw error; // Auth errors or unknown fatal errors
