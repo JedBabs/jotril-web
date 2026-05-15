@@ -1,5 +1,6 @@
 export const maxDuration = 300; // 5 minute timeout
 import { NextResponse } from 'next/server';
+import { after } from 'next/server';
 import getPrisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
@@ -36,8 +37,10 @@ export async function POST(req, { params }) {
         data: { datasetId: id, status: 'PENDING', progress: 0 }
     });
 
-    // Start tuning in background (don't await)
-    runTuningInBackground(run.id, id, dataset.samples);
+    // Start tuning in background
+    after(() => {
+        runTuningInBackground(run.id, id, dataset.samples);
+    });
 
     return NextResponse.json({ success: true, runId: run.id });
 }
