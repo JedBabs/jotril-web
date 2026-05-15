@@ -50,6 +50,29 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
     const prisma = getPrisma();
     console.log(`🚀 [Auto-Tune] Background run ${runId} started.`);
 
+    // ── Cancellation gate ──────────────────────────────────────────────
+    // Periodically checks the DB to see if the admin force-stopped this run.
+    // Throws if cancelled, which is caught by the outer try/catch.
+    let lastCancelCheck = Date.now();
+    const CANCEL_CHECK_INTERVAL_MS = 5000; // Check every 5 seconds at most
+    async function assertNotCancelled() {
+        const now = Date.now();
+        if (now - lastCancelCheck < CANCEL_CHECK_INTERVAL_MS) return;
+        lastCancelCheck = now;
+        try {
+            const current = await prisma.tuningRun.findUnique({
+                where: { id: runId },
+                select: { status: true }
+            });
+            if (!current || current.status === 'FAILED') {
+                throw new Error('CANCELLED');
+            }
+        } catch (e) {
+            if (e.message === 'CANCELLED') throw e;
+            // DB hiccup — don't kill the run for a transient read error
+        }
+    }
+
     try {
         // 1. Prepare documents
         const documents = prepareDocuments(rawSamples);
@@ -68,6 +91,7 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
             });
 
             cache = await buildScoreCache(documents, async (progress, status) => {
+                await assertNotCancelled();
                 await prisma.tuningRun.update({
                     where: { id: runId },
                     data: { status: 'CACHING', progress: Math.max(10, progress), error: null, message: status }
@@ -79,6 +103,8 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
                 data: { scoreCache: cache }
             });
         }
+
+        await assertNotCancelled();
 
         // 3. Baseline — evaluate current production config for before/after comparison
         const currentConfig = await getEngineConfig();
@@ -107,6 +133,7 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
         const DB_UPDATE_INTERVAL_MS = 3000; // Update DB at most every 3 seconds
 
         const searchResult = await runExhaustiveSearch(cache, async (progress, status, trialsRun) => {
+            await assertNotCancelled();
             const now = Date.now();
             if (now - lastDbUpdate >= DB_UPDATE_INTERVAL_MS || progress === 100) {
                 lastDbUpdate = now;
@@ -125,7 +152,10 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
             }
         });
 
-        // 5. Finalize — include baseline metrics for before/after comparison
+        // 5. Final cancel check before writing COMPLETE (don't resurrect a cancelled run)
+        await assertNotCancelled();
+
+        // 6. Finalize — include baseline metrics for before/after comparison
         await prisma.tuningRun.update({
             where: { id: runId },
             data: {
@@ -148,6 +178,10 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
         console.log(`✅ [Auto-Tune] Background run ${runId} complete. Baseline: ${baselineMetrics.accuracy}% → Best: ${searchResult.bestMetrics.accuracy}%`);
 
     } catch (error) {
+        if (error.message === 'CANCELLED') {
+            console.log(`🛑 [Auto-Tune] Background run ${runId} detected cancellation. Stopping gracefully.`);
+            return; // Don't overwrite the FAILED status that the cancel route already set
+        }
         console.error(`❌ [Auto-Tune] Background run ${runId} failed:`, error);
         try {
             await prisma.tuningRun.update({

@@ -744,8 +744,9 @@ function AutoTunePanel() {
         try {
             setRunProgress(prev => prev ? { ...prev, message: 'Cancelling run...' } : null);
             const res = await fetch(`/api/admin/auto-tune/${runId}/cancel`, { method: 'POST' });
-            if (!res.ok) throw new Error('Failed to cancel run');
-            showToast('Run cancelled successfully.', 'success');
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to cancel run');
+            showToast(data.message || 'Run cancelled successfully.', 'success');
             setRunProgress(null);
             setActiveRunId(null);
             fetchDatasets();
@@ -1208,8 +1209,16 @@ function AutoTunePanel() {
                                     )}
 
                                     {ds.latestRun && ds.latestRun.status === 'FAILED' && (
-                                        <div className="p-4 border-t text-sm font-bold text-score-ai bg-score-ai/5 flex items-center gap-2">
-                                            <XCircle className="w-5 h-5" /> Tuning run failed: {ds.latestRun.error}
+                                        <div className="p-4 border-t text-sm font-bold text-score-ai bg-score-ai/5 flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <XCircle className="w-5 h-5" /> Tuning run failed: {ds.latestRun.error || 'Unknown error'}
+                                            </div>
+                                            <button
+                                                onClick={() => cancelRun(ds.id)}
+                                                className="ml-4 shrink-0 px-4 py-1.5 text-xs font-bold text-white bg-score-ai hover:bg-score-ai/80 rounded-lg transition-colors"
+                                            >
+                                                Dismiss & Retry
+                                            </button>
                                         </div>
                                     )}
                                 </div>

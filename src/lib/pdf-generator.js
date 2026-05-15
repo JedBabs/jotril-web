@@ -51,6 +51,7 @@ function buildChunkMap(chunks) {
 
 // Fuzzy-forward match: walks through targetText and chunkMap simultaneously,
 // skipping whitespace mismatches to find the label for each character in targetText.
+// Robust against encoding drift (curly quotes, ligatures, em-dashes, etc.)
 function matchTextToChunkMap(targetText, fullAnalysisText, chunkMap) {
     const result = []; // label per char of targetText
     let aPtr = 0; // pointer into fullAnalysisText / chunkMap
@@ -68,15 +69,15 @@ function matchTextToChunkMap(targetText, fullAnalysisText, chunkMap) {
             continue;
         }
 
-        // Case-insensitive character comparison with limited forward-scan
-        // to handle encoding mismatches (curly quotes, em-dashes, ligatures, etc.)
+        // Case-insensitive character comparison
         if (aPtr < fullAnalysisText.length && tChar.toLowerCase() === fullAnalysisText[aPtr].toLowerCase()) {
             result.push(chunkMap[aPtr] || 'human');
             aPtr++;
         } else {
-            // Try scanning ahead up to 5 chars for a match (encoding drift recovery)
+            // Try scanning ahead up to 20 chars for a match (encoding drift recovery)
             let found = false;
-            for (let scan = 1; scan <= 5 && aPtr + scan < fullAnalysisText.length; scan++) {
+            const maxScan = Math.min(20, fullAnalysisText.length - aPtr);
+            for (let scan = 1; scan <= maxScan; scan++) {
                 if (tChar.toLowerCase() === fullAnalysisText[aPtr + scan].toLowerCase()) {
                     aPtr += scan;
                     result.push(chunkMap[aPtr] || 'human');
@@ -86,14 +87,36 @@ function matchTextToChunkMap(targetText, fullAnalysisText, chunkMap) {
                 }
             }
             if (!found) {
-                // Fallback: use nearest label and advance analysis pointer
+                // Large-gap resync: grab next ~15 chars from target and search for them
+                // in the analysis text within a ±200 char window
+                const lookAhead = targetText.substring(t, t + 15).replace(/\s+/g, '').toLowerCase();
+                if (lookAhead.length >= 6) {
+                    const searchStart = Math.max(0, aPtr - 30);
+                    const searchEnd = Math.min(fullAnalysisText.length, aPtr + 200);
+                    const searchWindow = fullAnalysisText.substring(searchStart, searchEnd).replace(/\s+/g, '').toLowerCase();
+                    const resyncIdx = searchWindow.indexOf(lookAhead.substring(0, 6));
+                    if (resyncIdx >= 0) {
+                        // Walk the non-whitespace-stripped pointer to the resync point
+                        let realIdx = searchStart;
+                        let stripped = 0;
+                        while (realIdx < searchEnd && stripped < resyncIdx) {
+                            if (!/\s/.test(fullAnalysisText[realIdx])) stripped++;
+                            realIdx++;
+                        }
+                        aPtr = realIdx;
+                        result.push(chunkMap[aPtr] || 'human');
+                        aPtr++;
+                        continue;
+                    }
+                }
+                // Fallback: use nearest label but do NOT advance aPtr (prevent desync snowball)
                 result.push(chunkMap[Math.min(aPtr, chunkMap.length - 1)] || 'human');
-                aPtr++;
             }
         }
     }
     return result;
 }
+
 
 // ─── REPORT HEADER & SUMMARY ────────────────────────────────
 function renderReportHeader(doc, data, margin, pageWidth) {

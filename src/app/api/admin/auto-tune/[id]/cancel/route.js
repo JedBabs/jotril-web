@@ -14,20 +14,33 @@ export async function POST(req, { params }) {
         const { id } = await params;
         const prisma = getPrisma();
 
-        const run = await prisma.tuningRun.findUnique({
-            where: { id }
-        });
+        // The frontend may send either a run ID or a dataset ID.
+        // Try to find the run directly first, then fall back to finding
+        // the latest run for the given dataset ID.
+        let run = await prisma.tuningRun.findUnique({ where: { id } });
 
         if (!run) {
-            return NextResponse.json({ error: 'Run not found' }, { status: 404 });
+            // Fallback: treat `id` as a dataset ID and find its latest run
+            run = await prisma.tuningRun.findFirst({
+                where: { datasetId: id },
+                orderBy: { createdAt: 'desc' }
+            });
         }
 
+        if (!run) {
+            return NextResponse.json({ error: 'No tuning run found for this ID' }, { status: 404 });
+        }
+
+        // If the run already finished (COMPLETE or FAILED), delete it so
+        // the user can start a fresh run on the same dataset.
         if (run.status === 'COMPLETE' || run.status === 'FAILED') {
-            return NextResponse.json({ error: 'Run is already finished' }, { status: 400 });
+            await prisma.tuningRun.delete({ where: { id: run.id } });
+            return NextResponse.json({ success: true, message: 'Finished run cleared successfully.' });
         }
 
+        // Otherwise, mark the active run as FAILED (force-stop).
         await prisma.tuningRun.update({
-            where: { id },
+            where: { id: run.id },
             data: {
                 status: 'FAILED',
                 error: 'Run forcefully cancelled by administrator.',
