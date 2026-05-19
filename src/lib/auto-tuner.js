@@ -91,77 +91,73 @@ export function prepareDocuments(rawSamples) {
  */
 export async function buildScoreCache(documents, onProgress, checkCancel = null) {
     const cache = [];
-    const totalDocs = documents.length;
-    const textDedup = new Map(); // Deduplicate identical scenario texts
+    const textDedup = new Map();
 
-    for (let i = 0; i < totalDocs; i++) {
-        const doc = documents[i];
-        if (checkCancel) await checkCancel();
-
-        await onProgress?.(Math.round((i / totalDocs) * 100), `Querying model for document ${i + 1}/${totalDocs}...`);
-
-        // Step 1: Generate all multi-scale analysis scenarios
+    // Step 1: Generate all multi-scale analysis scenarios across ALL documents simultaneously
+    await onProgress?.(0, "Generating multi-scale scenarios...");
+    const allDocItems = documents.map(doc => {
         const { scenarios, sentences, totalSentences } = generateAnalysisScenarios(doc.text);
+        return { doc, scenarios, sentences, totalSentences, queryMap: [] };
+    });
 
-        // Step 2: Deduplicate scenario texts across documents
-        const textsToQuery = [];
-        const queryMap = []; // Maps scenario index → deduplicated text index or cached score
-        for (let s = 0; s < scenarios.length; s++) {
-            const normalized = scenarios[s].text.trim().toLowerCase();
+    const textsToQuery = [];
+
+    // Step 2: Flatten arrays universally and deduplicate
+    allDocItems.forEach((item) => {
+        for (let s = 0; s < item.scenarios.length; s++) {
+            const normalized = item.scenarios[s].text.trim().toLowerCase();
             if (textDedup.has(normalized)) {
-                queryMap.push({ type: 'cached', score: textDedup.get(normalized) });
+                item.queryMap.push({ type: 'cached', score: null, normalized });
             } else {
-                queryMap.push({ type: 'query', queryIdx: textsToQuery.length });
-                textsToQuery.push(scenarios[s].text);
+                item.queryMap.push({ type: 'query', queryIdx: textsToQuery.length, normalized });
+                textsToQuery.push(item.scenarios[s].text);
+                textDedup.set(normalized, null); // reserve cache slot
             }
         }
+    });
 
-        // Step 3: Query the model for new texts only
-        let rawResults = [];
-        if (textsToQuery.length > 0) {
-            rawResults = await batchQueryModel(textsToQuery, 64, 0, checkCancel, (pct, msg) => {
-                // Map per-document batch progress into overall document progress
-                const docProgress = Math.round((i / totalDocs) * 100);
-                const withinDocProgress = Math.round(pct * (1 / totalDocs));
-                onProgress?.(Math.min(99, docProgress + withinDocProgress), `Doc ${i + 1}/${totalDocs}: ${msg}`);
-            });
-        }
-
-        // Step 4: Validate — if any result is null, the cache would be corrupted
-        const nullCount = rawResults.filter(r => !r).length;
-        if (nullCount > 0) {
-            throw new Error(
-                `Model returned ${nullCount}/${textsToQuery.length} failed results for document ${i + 1}. ` +
-                `This would corrupt the score cache. Check HuggingFace Space availability.`
-            );
-        }
-
-        // Step 5: Convert model outputs to raw 0-100 scores and cache dedup
-        const scores = queryMap.map((entry, idx) => {
-            let score;
-            if (entry.type === 'cached') {
-                score = entry.score;
-            } else {
-                const result = rawResults[entry.queryIdx];
-                score = result.aiScore * 100;
-                // Same confidence penalty as production pipeline
-                const wordCount = scenarios[idx].text.split(/\s+/).length;
-                if (wordCount < 10) {
-                    score = 50 + (score - 50) * 0.6;
-                }
-                // Cache for future deduplication
-                const normalized = scenarios[idx].text.trim().toLowerCase();
-                textDedup.set(normalized, score);
-            }
-            return score;
+    // Step 3: Unleash the fully unblocked continuous worker pool
+    let rawResults = [];
+    if (textsToQuery.length > 0) {
+        rawResults = await batchQueryModel(textsToQuery, 64, 0, checkCancel, (pct, msg) => {
+            onProgress?.(Math.min(99, pct), `Analyzing linguistic patterns: ${msg}`);
         });
+    }
+
+    // Step 4: Validate
+    const nullCount = rawResults.filter(r => !r).length;
+    if (nullCount > 0) {
+        throw new Error(
+            `Model returned ${nullCount}/${textsToQuery.length} failed results. Check HuggingFace Space availability.`
+        );
+    }
+
+    // Step 5: Process and cache scores globally
+    textsToQuery.forEach((text, i) => {
+        const result = rawResults[i];
+        let score = result.aiScore * 100;
+
+        // Same confidence penalty as production pipeline
+        const wordCount = text.split(/\s+/).length;
+        if (wordCount < 10) {
+            score = 50 + (score - 50) * 0.6;
+        }
+
+        const normalized = text.trim().toLowerCase();
+        textDedup.set(normalized, score);
+    });
+
+    // Step 6: Reconstruct the original document structures for the Engine
+    for (let i = 0; i < allDocItems.length; i++) {
+        const item = allDocItems[i];
+        const scores = item.queryMap.map((entry) => textDedup.get(entry.normalized));
 
         cache.push({
-            scenarios,
-            sentences,
+            scenarios: item.scenarios,
+            sentences: item.sentences,
             scores,
-            label: doc.label,
-            totalSentences,
+            label: item.doc.label,
+            totalSentences: item.totalSentences,
         });
     }
 
