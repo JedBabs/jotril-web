@@ -62,8 +62,8 @@ export async function POST(req) {
             };
 
             finalSamples = [
-                ...pickFromPool(humanPool, 1000),
-                ...pickFromPool(aiPool, 1000)
+                ...pickFromPool(humanPool, 200),
+                ...pickFromPool(aiPool, 200)
             ];
 
             finalName = name || 'Master Dataset';
