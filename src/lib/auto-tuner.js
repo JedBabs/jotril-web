@@ -119,28 +119,30 @@ export async function buildScoreCache(documents, onProgress, checkCancel = null)
     // Step 3: Unleash the fully unblocked continuous worker pool
     let rawResults = [];
     if (textsToQuery.length > 0) {
-        rawResults = await batchQueryModel(textsToQuery, 24, 0, checkCancel, (pct, msg) => {
+        rawResults = await batchQueryModel(textsToQuery, 12, 0, checkCancel, (pct, msg) => {
             onProgress?.(Math.min(99, pct), `Analyzing linguistic patterns: ${msg}`);
         });
     }
 
-    // Step 4: Validate
+    // Step 4: Validate — warn but don't crash on partial failures
     const nullCount = rawResults.filter(r => !r).length;
     if (nullCount > 0) {
-        throw new Error(
-            `Model returned ${nullCount}/${textsToQuery.length} failed results. Check HuggingFace Space availability.`
-        );
+        console.warn(`⚠️ [Auto-Tune] ${nullCount}/${textsToQuery.length} queries returned null (timed out). Using neutral score (50) for these.`);
     }
 
     // Step 5: Process and cache scores globally
     textsToQuery.forEach((text, i) => {
         const result = rawResults[i];
-        let score = result.aiScore * 100;
-
-        // Same confidence penalty as production pipeline
-        const wordCount = text.split(/\s+/).length;
-        if (wordCount < 10) {
-            score = 50 + (score - 50) * 0.6;
+        let score;
+        if (!result) {
+            score = 50; // Neutral fallback for timed-out queries
+        } else {
+            score = result.aiScore * 100;
+            // Same confidence penalty as production pipeline
+            const wordCount = text.split(/\s+/).length;
+            if (wordCount < 10) {
+                score = 50 + (score - 50) * 0.6;
+            }
         }
 
         const normalized = text.trim().toLowerCase();
