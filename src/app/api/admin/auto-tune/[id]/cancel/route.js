@@ -33,16 +33,16 @@ export async function POST(req, { params }) {
 
         // If the run already finished (COMPLETE or FAILED), delete it so
         // the user can start a fresh run on the same dataset.
-        if (run.status === 'COMPLETE' || run.status === 'FAILED') {
+        if (run.status === 'COMPLETE' || run.status === 'FAILED' || run.status === 'CANCELLED') {
             await prisma.tuningRun.delete({ where: { id: run.id } });
             return NextResponse.json({ success: true, message: 'Finished run cleared successfully.' });
         }
 
-        // Otherwise, mark the active run as FAILED (force-stop).
+        // Otherwise, mark the active run as CANCELLED (force-stop).
         await prisma.tuningRun.update({
             where: { id: run.id },
             data: {
-                status: 'FAILED',
+                status: 'CANCELLED',
                 error: 'Run forcefully cancelled by administrator.',
                 completedAt: new Date()
             }

@@ -59,9 +59,9 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
 
     // ── Cancellation gate ──────────────────────────────────────────────
     // Periodically checks the DB to see if the admin force-stopped this run.
-    // Throws if cancelled, which is caught by the outer try/catch.
+    // Only triggers on explicit CANCELLED status (set by the /cancel endpoint).
     let lastCancelCheck = Date.now();
-    const CANCEL_CHECK_INTERVAL_MS = 5000; // Check every 5 seconds at most
+    const CANCEL_CHECK_INTERVAL_MS = 10000; // Check every 10 seconds at most
     async function assertNotCancelled() {
         const now = Date.now();
         if (now - lastCancelCheck < CANCEL_CHECK_INTERVAL_MS) return;
@@ -71,7 +71,9 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
                 where: { id: runId },
                 select: { status: true }
             });
-            if (!current || current.status === 'FAILED') {
+            // ONLY cancel on explicit CANCELLED status — NOT on FAILED
+            // (FAILED can be set by our own error handler, causing a feedback loop)
+            if (!current || current.status === 'CANCELLED') {
                 throw new Error('CANCELLED');
             }
         } catch (e) {
@@ -195,14 +197,18 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
     } catch (error) {
         if (error.message === 'CANCELLED') {
             console.log(`🛑 [Auto-Tune] Background run ${runId} detected cancellation. Stopping gracefully.`);
-            return; // Don't overwrite the FAILED status that the cancel route already set
+            return; // Don't overwrite the CANCELLED status that the cancel route already set
         }
         console.error(`❌ [Auto-Tune] Background run ${runId} failed:`, error);
         try {
-            await prisma.tuningRun.update({
-                where: { id: runId },
-                data: { status: 'FAILED', error: error.message }
-            });
+            // Only set FAILED if it hasn't already completed
+            const currentRun = await prisma.tuningRun.findUnique({ where: { id: runId }, select: { status: true } });
+            if (currentRun && currentRun.status !== 'COMPLETE' && currentRun.status !== 'CANCELLED') {
+                await prisma.tuningRun.update({
+                    where: { id: runId },
+                    data: { status: 'FAILED', error: error.message?.substring(0, 500) || 'Unknown error' }
+                });
+            }
         } catch (dbErr) {
             console.error(`❌ [Auto-Tune] Failed to update run status:`, dbErr.message);
         }
@@ -264,7 +270,7 @@ export async function GET(req, { params }) {
                     lastStatus = run.status;
                 }
 
-                if (run.status === 'COMPLETE' || run.status === 'FAILED') {
+                if (run.status === 'COMPLETE' || run.status === 'FAILED' || run.status === 'CANCELLED') {
                     clearInterval(pollInterval);
                     controller.close();
                 }

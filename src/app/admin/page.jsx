@@ -817,7 +817,7 @@ function AutoTunePanel() {
                         data.status === 'COMPLETE' ? 'Tuning Complete!' : data.status)
             });
 
-            if (data.status === 'COMPLETE' || data.status === 'FAILED') {
+            if (data.status === 'COMPLETE' || data.status === 'FAILED' || data.status === 'CANCELLED') {
                 eventSource.close();
                 setTimeout(() => {
                     setRunProgress(null);
