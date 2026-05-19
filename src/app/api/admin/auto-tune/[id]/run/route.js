@@ -91,7 +91,7 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
 
         // ── Time-based throttle to avoid hammering the DB ──
         let lastDbUpdate = Date.now();
-        const DB_UPDATE_INTERVAL_MS = 1000; // Update DB at most every 1 second
+        const DB_UPDATE_INTERVAL_MS = 2500; // Update DB at most every 2.5 seconds
 
         if (dataset.scoreCache) {
             cache = dataset.scoreCache;
@@ -268,7 +268,7 @@ export async function GET(req, { params }) {
                     clearInterval(pollInterval);
                     controller.close();
                 }
-            }, 1000); // Poll DB every second for SSE relay
+            }, 2500); // Poll DB every 2.5 seconds for SSE relay
 
             req.signal.addEventListener('abort', () => clearInterval(pollInterval));
         }

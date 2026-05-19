@@ -943,16 +943,17 @@ function AutoTunePanel() {
                                                 <div className="flex justify-between items-center mb-6">
                                                     <div>
                                                         <h3 className="text-xl font-bold text-white mb-1">
+                                                            {runProgress.status === 'PENDING' && 'Pending Execution... (Stalled)'}
                                                             {runProgress.status === 'STARTING' && 'Initializing Tune-Up'}
                                                             {runProgress.status === 'CACHING' && 'Building Score Cache'}
                                                             {runProgress.status === 'TUNING' && 'Exhaustive Search In Progress'}
                                                             {runProgress.status === 'COMPLETE' && 'Tuning Complete'}
                                                             {runProgress.status === 'FAILED' && 'Tuning Failed'}
                                                         </h3>
-                                                        <p className="text-silver text-sm">{runProgress.message}</p>
+                                                        <p className="text-silver text-sm">{runProgress.message || 'Waiting for background process to start...'}</p>
                                                     </div>
 
-                                                    {(runProgress.status === 'STARTING' || runProgress.status === 'CACHING' || runProgress.status === 'TUNING') && (
+                                                    {(runProgress.status === 'PENDING' || runProgress.status === 'STARTING' || runProgress.status === 'CACHING' || runProgress.status === 'TUNING') && (
                                                         <button
                                                             onClick={() => cancelRun(activeRunId)}
                                                             className="px-4 py-2 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-lg font-bold text-sm transition-colors border border-red-500/20"
