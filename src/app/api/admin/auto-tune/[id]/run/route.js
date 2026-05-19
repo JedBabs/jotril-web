@@ -33,6 +33,11 @@ export async function POST(req, { params }) {
         return NextResponse.json({ success: true, runId: activeRun.id, message: 'Continuing active run' });
     }
 
+    // Clean up ALL old dead runs for this dataset so they don't confuse the SSE poller
+    await prisma.tuningRun.deleteMany({
+        where: { datasetId: id, status: { in: ['FAILED', 'CANCELLED'] } }
+    });
+
     // Create a new tuning run
     const run = await prisma.tuningRun.create({
         data: { datasetId: id, status: 'PENDING', progress: 0 }
@@ -238,10 +243,17 @@ export async function GET(req, { params }) {
             let lastStatus = '';
 
             const pollInterval = setInterval(async () => {
-                const run = await prisma.tuningRun.findFirst({
-                    where: { datasetId: id },
+                // Prioritize active runs; only fall back to latest if none active
+                let run = await prisma.tuningRun.findFirst({
+                    where: { datasetId: id, status: { in: ['PENDING', 'CACHING', 'TUNING'] } },
                     orderBy: { createdAt: 'desc' }
                 });
+                if (!run) {
+                    run = await prisma.tuningRun.findFirst({
+                        where: { datasetId: id },
+                        orderBy: { createdAt: 'desc' }
+                    });
+                }
 
                 if (!run) {
                     send({ error: 'No active run' });
