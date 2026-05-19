@@ -22,14 +22,25 @@ export async function POST(req) {
         let finalName = name;
 
         if (source === 'split-public') {
+            let allPublicSamples = [];
             for (let i = 1; i <= 4; i++) {
                 const chunkPath = path.join(process.cwd(), 'public', `tuning_baseline_part_${i}.json`);
                 if (!fs.existsSync(chunkPath)) {
                     return NextResponse.json({ error: `Missing dataset part ${i}` }, { status: 404 });
                 }
                 const content = fs.readFileSync(chunkPath, 'utf8');
-                finalSamples.push(...JSON.parse(content));
+                allPublicSamples.push(...JSON.parse(content));
             }
+
+            // Apply the same smart sampling cap as local datasets
+            const humanPool = allPublicSamples.filter(s => s.label?.toLowerCase() === 'human');
+            const aiPool = allPublicSamples.filter(s => s.label?.toLowerCase() === 'ai');
+            const pickFromPool = (pool, count) => {
+                if (pool.length <= count) return pool;
+                const stride = pool.length / count;
+                return Array.from({ length: count }, (_, i) => pool[Math.floor(i * stride)]);
+            };
+            finalSamples = [...pickFromPool(humanPool, 200), ...pickFromPool(aiPool, 200)];
             finalName = name || 'Internal Baseline Dataset';
         } else if (source === 'local') {
             // Priority: Project Root, Fallback: Parent Dir
