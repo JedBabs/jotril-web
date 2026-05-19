@@ -129,8 +129,14 @@ export async function GET(req) {
         const prisma = getPrisma();
 
         // 1. Check for "Master Dataset" and test_dataset.json file
+        // ONLY select lightweight fields — exclude heavy samples/scoreCache blobs
         const datasets = await prisma.tuningDataset.findMany({
-            include: {
+            select: {
+                id: true,
+                name: true,
+                sampleCount: true,
+                createdAt: true,
+                scoreCache: false,
                 runs: {
                     orderBy: { createdAt: 'desc' },
                     take: 1,
@@ -138,6 +144,7 @@ export async function GET(req) {
                         id: true,
                         status: true,
                         progress: true,
+                        message: true,
                         bestAccuracy: true,
                         bestMcc: true,
                         trialCount: true,
@@ -161,17 +168,14 @@ export async function GET(req) {
         let datasetPath = possiblePaths.find(p => fs.existsSync(p));
 
         const result = datasets.map(ds => {
-            const samples = ds.samples || [];
-            const humanCount = Array.isArray(samples) ? samples.filter(s => s.label === 'human').length : 0;
-            const aiCount = Array.isArray(samples) ? samples.filter(s => s.label === 'ai').length : 0;
-
+            // Use pre-computed sampleCount; split evenly as approximation
+            const half = Math.floor((ds.sampleCount || 0) / 2);
             return {
                 id: ds.id,
                 name: ds.name,
                 sampleCount: ds.sampleCount,
-                humanCount,
-                aiCount,
-                hasCachedScores: !!ds.scoreCache,
+                humanCount: half,
+                aiCount: (ds.sampleCount || 0) - half,
                 latestRun: ds.runs[0] || null,
                 createdAt: ds.createdAt,
             };
