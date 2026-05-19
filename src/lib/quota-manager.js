@@ -247,10 +247,11 @@ export async function recordQuotaUsage(hash, userId, type, size, pointCost, sent
 
     // The daily points pool only takes the hit for whatever it could afford to pay natively.
     // The deficit is covered exclusively from the user's purchased balance.
+    const dbUserId = userId === 'dev-admin-id' ? null : userId;
     const createPromise = prisma.quotaUsage.create({
         data: {
             hash,
-            userId,
+            userId: dbUserId,
             type,
             size,
             pointsCost: pointCost - purchasedDeficit,

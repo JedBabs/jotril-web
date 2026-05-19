@@ -18,6 +18,22 @@ export async function GET(req) {
         const prisma = getPrisma();
         const userId = session.user.id;
 
+        // Bypass for Dev Admin (who doesn't exist in the database)
+        if (userId === 'dev-admin-id') {
+            return NextResponse.json({
+                totalRequests: 0,
+                totalPointsSpent: 0,
+                keyCount: 0,
+                tier: 'ADMIN',
+                purchasedPoints: 999999,
+                email: 'dev@antigravity.local',
+                name: 'Dev Admin',
+                memberSince: new Date().toISOString(),
+                recentScans: [],
+                pastScanResults: []
+            });
+        }
+
         // Total analysis requests
         const totalRequests = await prisma.quotaUsage.count({
             where: { userId }

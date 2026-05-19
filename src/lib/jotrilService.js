@@ -1,51 +1,106 @@
 /**
  * Jotril V2 Model Service
  * Centralized client for the Hugging Face Gradio spaces.
+ * Uses direct REST calls to the Gradio 6.x API (which lives at /gradio_api/).
  * Handles load balancing, authentication, timeouts, retries, and response parsing.
  */
-
-import { Client } from "@gradio/client";
 
 const SPACES = [
     "JedBabs/Jotril-Space-1",
     "JedBabs/Jotril-Space-2"
 ];
 
-const MAX_RETRIES = 3;
-const RETRY_BASE_DELAY_MS = 2000;
+// Convert space name to direct URL (e.g. "JedBabs/Jotril-Space-1" → "https://jedbabs-jotril-space-1.hf.space")
+function spaceToUrl(spaceName) {
+    return `https://${spaceName.replace("/", "-").toLowerCase()}.hf.space`;
+}
 
-// ── Gradio Client connection cache ─────────────────────────────────────
-// Reuses existing connections instead of reconnecting on every request
-// (~1-2 second saving per query). TTL auto-expires stale connections.
-const CLIENT_CACHE = new Map(); // Map<spaceName, { client, createdAt }>
-const CLIENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 1500;
+const QUERY_TIMEOUT_MS = 30000; // 30s hard timeout per individual model query
 
-async function getOrCreateClient(spaceName) {
-    const cached = CLIENT_CACHE.get(spaceName);
-    if (cached && (Date.now() - cached.createdAt) < CLIENT_CACHE_TTL_MS) {
-        return cached.client;
+/**
+ * Validates the HF_TOKEN by making a native fetch to a known space.
+ * This ensures we throw a fast, clean auth error instead of mysterious hangs.
+ */
+export async function checkHfToken() {
+    if (!process.env.HF_TOKEN) {
+        throw new JotrilServiceError('HF_TOKEN environment variable is not set.', 'AUTH_ERROR');
+    }
+    try {
+        const response = await fetch(`https://huggingface.co/api/spaces/${SPACES[0]}`, {
+            headers: { "Authorization": `Bearer ${process.env.HF_TOKEN}` }
+        });
+        if (response.status === 401 || response.status === 403) {
+            throw new JotrilServiceError(`HuggingFace Token gets ${response.status} from API. Ensure your token is valid and has read access.`, 'AUTH_ERROR');
+        }
+        return true;
+    } catch (e) {
+        if (e instanceof JotrilServiceError) throw e;
+        console.warn(`⚠️ [JotrilService] Pre-flight token check failed: ${e.message}`);
+        return true;
+    }
+}
+
+/**
+ * Queries a Gradio 6.x space directly via REST (bypassing @gradio/client).
+ * 1. POST /gradio_api/call/predict  → returns { event_id }
+ * 2. GET  /gradio_api/call/predict/{event_id} → SSE stream with final result
+ */
+async function directPredict(spaceName, text) {
+    const baseUrl = spaceToUrl(spaceName);
+    const headers = {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.HF_TOKEN}`
+    };
+
+    // Step 1: Submit the prediction request
+    const submitRes = await fetch(`${baseUrl}/gradio_api/call/predict`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ data: [text] })
+    });
+
+    if (!submitRes.ok) {
+        const errText = await submitRes.text().catch(() => '');
+        throw new Error(`Space ${spaceName} submit failed (${submitRes.status}): ${errText}`);
     }
 
-    let lastErr;
-    for (let i = 0; i < 5; i++) {
-        try {
-            const client = await Client.connect(spaceName, {
-                hf_token: process.env.HF_TOKEN
-            });
-            CLIENT_CACHE.set(spaceName, { client, createdAt: Date.now() });
-            return client;
-        } catch (error) {
-            lastErr = error;
-            const msg = error.message || String(error);
-            if (msg.includes('metadata could not be loaded') || msg.includes('504') || msg.includes('503')) {
-                console.warn(`⏳ [JotrilService] Space ${spaceName} metadata not ready. Retrying in 10s (Attempt ${i + 1}/5)...`);
-                await new Promise(resolve => setTimeout(resolve, 10000));
-            } else {
-                throw error;
+    const { event_id } = await submitRes.json();
+    if (!event_id) {
+        throw new Error(`Space ${spaceName} returned no event_id`);
+    }
+
+    // Step 2: Fetch the result via SSE endpoint
+    const resultRes = await fetch(`${baseUrl}/gradio_api/call/predict/${event_id}`, {
+        headers: { "Authorization": `Bearer ${process.env.HF_TOKEN}` }
+    });
+
+    if (!resultRes.ok) {
+        const errText = await resultRes.text().catch(() => '');
+        throw new Error(`Space ${spaceName} result fetch failed (${resultRes.status}): ${errText}`);
+    }
+
+    const sseText = await resultRes.text();
+
+    // Parse SSE: look for "event: complete\ndata: [...]"
+    const lines = sseText.split('\n');
+    let lastEventType = '';
+    for (const line of lines) {
+        if (line.startsWith('event: ')) {
+            lastEventType = line.substring(7).trim();
+        } else if (line.startsWith('data: ')) {
+            const dataStr = line.substring(6).trim();
+            if (lastEventType === 'error') {
+                throw new Error(`Space ${spaceName} prediction error: ${dataStr}`);
+            }
+            if (lastEventType === 'complete' && dataStr) {
+                return JSON.parse(dataStr);
             }
         }
     }
-    throw lastErr;
+
+    throw new Error(`Space ${spaceName} returned no complete event. Raw SSE: ${sseText.substring(0, 200)}`);
 }
 
 /**
@@ -77,12 +132,7 @@ function isColdStartError(error) {
  * @returns {Promise<{aiScore: number, humanScore: number, label: string, confidence: object, spaceUsed: string}>}
  */
 export async function queryJotrilModel(text, preferredSpace = null, triedSpaces = new Set()) {
-    if (!process.env.HF_TOKEN) {
-        throw new JotrilServiceError(
-            'HF_TOKEN environment variable is not set. Add your HuggingFace token to .env',
-            'AUTH_ERROR'
-        );
-    }
+    await checkHfToken();
 
     // 1. Select a space (randomly or preferred)
     const selectedSpace = preferredSpace || SPACES[Math.floor(Math.random() * SPACES.length)];
@@ -95,28 +145,20 @@ export async function queryJotrilModel(text, preferredSpace = null, triedSpaces 
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
-            // Connect to the Gradio Space (uses 5-min caching to avoid 1-2s negotiation overhead)
-            const app = await getOrCreateClient(selectedSpace).catch(err => {
-                console.error(`❌ [JotrilService] Connection failed to ${selectedSpace}:`, err.message || err);
-                throw err;
-            });
+            // Direct REST call to Gradio 6.x API with hard timeout
+            const result = await Promise.race([
+                directPredict(selectedSpace, text),
+                new Promise((_, reject) => setTimeout(() => reject(new Error(`Prediction timed out after ${QUERY_TIMEOUT_MS / 1000}s`)), QUERY_TIMEOUT_MS))
+            ]);
 
-            // Perform prediction
-            // The "/predict" endpoint usually expects [text] as input
-            const result = await app.predict("/predict", [text]);
-
-            // V2 Format expected by frontend: [label_obj, score_pct, score_decimal]
-            // result.data[0] = Label dict (Human vs AI)
-            // result.data[1] = Confidence percentage
-            // result.data[2] = AI Probability meter (0-1)
-
-            if (result && result.data && result.data.length >= 3) {
-                const aiScore = result.data[2];
+            // V2 Format: [label_obj, score_pct, score_decimal]
+            if (result && Array.isArray(result) && result.length >= 3) {
+                const aiScore = result[2];
                 return {
                     aiScore: typeof aiScore === 'number' ? aiScore : 0,
                     humanScore: typeof aiScore === 'number' ? 1 - aiScore : 1,
                     label: aiScore >= 0.5 ? 'AI GENERATED' : 'HUMAN WRITTEN',
-                    confidence: result.data[0] || {},
+                    confidence: result[0] || {},
                     spaceUsed: selectedSpace
                 };
             }
@@ -136,6 +178,7 @@ export async function queryJotrilModel(text, preferredSpace = null, triedSpaces 
                     return queryJotrilModel(text, otherSpace, triedSpaces);
                 }
 
+                console.error(`🚨 [JotrilService] Both spaces are warming up. Informing caller of COLD_START.`);
                 throw new JotrilServiceError(
                     'The Jotril engine is warming up. This takes about 30-60 seconds.',
                     'COLD_START',
@@ -184,33 +227,54 @@ export async function queryJotrilModel(text, preferredSpace = null, triedSpaces 
  * @param {() => Promise<void>} checkCancel - Optional callback to throw if cancelled
  * @returns {Promise<Array<{aiScore: number, humanScore: number, label: string} | null>>}
  */
-export async function batchQueryModel(texts, concurrency = 3, batchDelay = 300, checkCancel = null) {
+export async function batchQueryModel(texts, concurrency = 3, batchDelay = 300, checkCancel = null, onProgress = null) {
     const results = [];
-    const MAX_BATCH_RETRIES = 10;
+    const MAX_BATCH_RETRIES = 3;
+    const totalBatches = Math.ceil(texts.length / concurrency);
 
     let i = 0;
     let batchRetryCount = 0;
 
+    // Quick preflight to ensure token is valid before we kick off massive limits
+    await checkHfToken();
+
     while (i < texts.length) {
         if (checkCancel) await checkCancel();
 
-        const batch = texts.slice(i, i + concurrency);
+        let queriesCompletedInBatch = 0;
+
         const batchPromises = batch.map(async (text, index) => {
             try {
                 // For batches (like in auto-tuning), we alternate spaces to ensure both clusters are fully utilized
                 const preferredSpace = SPACES[(i + index) % SPACES.length];
-                return await queryJotrilModel(text, preferredSpace);
+                const result = await queryJotrilModel(text, preferredSpace);
+
+                // Track granular live progress per active query rather than waiting for the batch block to end
+                queriesCompletedInBatch++;
+                if (onProgress) {
+                    const totalCompleted = i + queriesCompletedInBatch;
+                    const pct = Math.round((totalCompleted / texts.length) * 100);
+                    onProgress(pct, `Query ${totalCompleted}/${texts.length}`);
+                }
+
+                return result;
             } catch (error) {
                 if (error instanceof JotrilServiceError &&
                     (error.type === 'COLD_START' || error.type === 'RATE_LIMITED' || error.type === 'AUTH_ERROR')) {
                     throw error; // Bubble up to while loop for retry
                 }
                 console.error('[JotrilService] Batch item failed:', error.message);
+
+                queriesCompletedInBatch++; // Process failed, but it's done pending state
                 return null;
             }
         });
 
         try {
+            const currentBatchNum = Math.floor(i / concurrency) + 1;
+            if (currentBatchNum % 5 === 0 || currentBatchNum === 1) {
+                console.log(`[JotrilService] Processing batch ${currentBatchNum}/${totalBatches} (${batch.length} queries)`);
+            }
             const batchResults = await Promise.all(batchPromises);
             results.push(...batchResults);
 

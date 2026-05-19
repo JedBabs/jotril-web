@@ -119,7 +119,12 @@ export async function buildScoreCache(documents, onProgress, checkCancel = null)
         // Step 3: Query the model for new texts only
         let rawResults = [];
         if (textsToQuery.length > 0) {
-            rawResults = await batchQueryModel(textsToQuery, 5, 500, checkCancel);
+            rawResults = await batchQueryModel(textsToQuery, 64, 0, checkCancel, (pct, msg) => {
+                // Map per-document batch progress into overall document progress
+                const docProgress = Math.round((i / totalDocs) * 100);
+                const withinDocProgress = Math.round(pct * (1 / totalDocs));
+                onProgress?.(Math.min(99, docProgress + withinDocProgress), `Doc ${i + 1}/${totalDocs}: ${msg}`);
+            });
         }
 
         // Step 4: Validate — if any result is null, the cache would be corrupted
@@ -259,13 +264,13 @@ export function computeMetrics(predictions, truths) {
  */
 const PARAM_SPACE = {
     // Signal weights (relative — normalized by the pipeline)
-    'signalWeights.direct': { min: 0.10, max: 0.60, coarseStep: 0.10, fineStep: 0.02 },
-    'signalWeights.differential': { min: 0.10, max: 0.70, coarseStep: 0.10, fineStep: 0.02 },
-    'signalWeights.anchor': { min: 0.05, max: 0.50, coarseStep: 0.10, fineStep: 0.02 },
+    'signalWeights.direct': { min: 0.10, max: 0.50, coarseStep: 0.10, fineStep: 0.02 },
+    'signalWeights.differential': { min: 0.20, max: 0.60, coarseStep: 0.15, fineStep: 0.02 },
+    'signalWeights.anchor': { min: 0.10, max: 0.40, coarseStep: 0.10, fineStep: 0.02 },
 
     // Classification thresholds
-    'classification.humanMax': { min: 40, max: 80, coarseStep: 5, fineStep: 1 },
-    'classification.mixedMax': { min: 60, max: 95, coarseStep: 5, fineStep: 1 },
+    'classification.humanMax': { min: 40, max: 80, coarseStep: 10, fineStep: 2 },
+    'classification.mixedMax': { min: 60, max: 90, coarseStep: 10, fineStep: 2 },
 
     // Smoothing
     'smoothing.maxNudge': { min: 5, max: 45, coarseStep: 10, fineStep: 2 },
@@ -358,9 +363,10 @@ function cloneConfig(cfg) {
  *
  * @param {Array} cache - Score cache from buildScoreCache()
  * @param {(progress: number, status: string, trialsRun: number) => void} onProgress
+ * @param {number} deadline - Optional UNIX timestamp describing when to forcefully terminate the search
  * @returns {{ bestConfig, bestMetrics, trialCount, topTrials }}
  */
-export async function runExhaustiveSearch(cache, onProgress) {
+export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
     let bestConfig = getBaseConfig();
     let bestMetrics = evaluateConfig(cache, bestConfig);
     let bestScore = bestMetrics.mcc;
@@ -436,6 +442,15 @@ export async function runExhaustiveSearch(cache, onProgress) {
             await onProgress?.(Math.round((i / coarseTotal) * 33), `Phase 1: ${i}/${coarseTotal} combos (best MCC: ${bestScore.toFixed(4)})`, totalTrials);
             lastProgressUpdate = now;
         }
+
+        // Deadline check
+        if (deadline && now > deadline) {
+            console.warn("[Auto-Tune] Execution deadline reached during Phase 1. Stopping early.");
+            await onProgress?.(100, `Complete (Time Limit Reached). Best MCC: ${bestScore.toFixed(4)}`, totalTrials);
+            return {
+                bestConfig, bestMetrics, trialCount: totalTrials, topTrials: topTrials.slice(0, 20),
+            };
+        }
     }
 
     // ── PHASE 2: Medium sweep around best across ALL parameters ───────
@@ -471,6 +486,14 @@ export async function runExhaustiveSearch(cache, onProgress) {
 
         const paramProgress = 33 + Math.round(((allParams.indexOf(paramPath) + 1) / allParams.length) * 33);
         await onProgress?.(paramProgress, `Phase 2: Sweeping ${paramPath} (best MCC: ${bestScore.toFixed(4)})`, totalTrials);
+
+        if (deadline && Date.now() > deadline) {
+            console.warn("[Auto-Tune] Execution deadline reached during Phase 2. Stopping early.");
+            await onProgress?.(100, `Complete (Time Limit Reached). Best MCC: ${bestScore.toFixed(4)}`, totalTrials);
+            return {
+                bestConfig, bestMetrics, trialCount: totalTrials, topTrials: topTrials.slice(0, 20),
+            };
+        }
     }
 
     // ── PHASE 2.5: Pairwise interactions for top parameters ───────────
@@ -524,6 +547,14 @@ export async function runExhaustiveSearch(cache, onProgress) {
             `Phase 2.5: Pair ${p1} × ${p2} (best MCC: ${bestScore.toFixed(4)})`,
             totalTrials
         );
+
+        if (deadline && Date.now() > deadline) {
+            console.warn("[Auto-Tune] Execution deadline reached during Phase 2.5. Stopping early.");
+            await onProgress?.(100, `Complete (Time Limit Reached). Best MCC: ${bestScore.toFixed(4)}`, totalTrials);
+            return {
+                bestConfig, bestMetrics, trialCount: totalTrials, topTrials: topTrials.slice(0, 20),
+            };
+        }
     }
 
     // ── PHASE 3: Fine surgical sweep ±1 step around single best ───────
@@ -565,6 +596,11 @@ export async function runExhaustiveSearch(cache, onProgress) {
             `Phase 3 pass ${pass + 1}/3 (best MCC: ${bestScore.toFixed(4)})`,
             totalTrials
         );
+
+        if (deadline && Date.now() > deadline) {
+            console.warn("[Auto-Tune] Execution deadline reached during Phase 3. Stopping early.");
+            break; // Just break, as it will naturally return at the bottom
+        }
 
         // If no improvement in this pass, stop early
         if (!improved) break;

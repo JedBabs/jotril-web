@@ -1,4 +1,5 @@
 export const maxDuration = 300; // 5 minute timeout
+export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { after } from 'next/server';
 import getPrisma from '@/lib/prisma';
@@ -50,6 +51,9 @@ export async function POST(req, { params }) {
  * Updates the database persistently so it survives browser closure.
  */
 async function runTuningInBackground(runId, datasetId, rawSamples) {
+    const startTime = Date.now();
+    const deadline = startTime + 270000; // 4.5 minutes (leaving 30s buffer before Vercel kills it)
+
     const prisma = getPrisma();
     console.log(`🚀 [Auto-Tune] Background run ${runId} started.`);
 
@@ -153,7 +157,7 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
                     console.warn(`[Auto-Tune] Progress update failed (non-fatal):`, dbErr.message);
                 }
             }
-        });
+        }, deadline);
 
         // 5. Final cancel check before writing COMPLETE (don't resurrect a cancelled run)
         await assertNotCancelled();
@@ -265,8 +269,9 @@ export async function GET(req, { params }) {
     return new Response(stream, {
         headers: {
             'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
+            'Cache-Control': 'no-cache, no-transform',
             'Connection': 'keep-alive',
+            'Content-Encoding': 'none',
         }
     });
 }

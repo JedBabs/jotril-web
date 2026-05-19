@@ -1,19 +1,39 @@
 'use client';
 
-import { useState } from 'react';
-import { signIn } from 'next-auth/react';
+import { useState, useEffect } from 'react';
+import { signIn, useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 
 export default function SignInPage() {
     const router = useRouter();
+    const { data: session, status } = useSession();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [isDevMode, setIsDevMode] = useState(false);
     const [devPin, setDevPin] = useState('');
+
+    // Redirect already-authenticated users to the dashboard
+    useEffect(() => {
+        if (status === 'authenticated') {
+            router.replace('/dashboard');
+        }
+    }, [status, router]);
+
+    // Show nothing while checking session (prevents form flash)
+    if (status === 'loading' || status === 'authenticated') {
+        return (
+            <div className="min-h-screen bg-white flex items-center justify-center font-sans aurora-bg">
+                <div className="relative w-16 h-16">
+                    <div className="absolute inset-0 rounded-full border-4 border-silver border-t-accent-blue animate-spin" />
+                    <div className="absolute inset-3 rounded-full border-4 border-silver border-b-accent-cyan animate-[spin_2s_reverse_infinite]" />
+                </div>
+            </div>
+        );
+    }
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -187,11 +207,10 @@ export default function SignInPage() {
                                 disabled={isLoading}
                                 whileHover={{ scale: 1.01 }}
                                 whileTap={{ scale: 0.98 }}
-                                className={`w-full flex justify-center py-3.5 px-4 border border-transparent rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 disabled:shadow-none btn-shimmer ${
-                                    isDevMode
+                                className={`w-full flex justify-center py-3.5 px-4 border border-transparent rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 disabled:shadow-none btn-shimmer ${isDevMode
                                         ? 'bg-score-ai hover:bg-score-ai/90 shadow-[0_4px_14px_rgba(239,68,68,0.25)] focus:ring-4 focus:ring-score-ai/20'
                                         : 'bg-accent-blue hover:bg-accent-blue-light shadow-[0_4px_14px_rgba(37,99,235,0.25)] focus:ring-4 focus:ring-accent-blue/20'
-                                }`}
+                                    }`}
                             >
                                 {isLoading ? 'Signing in...' : isDevMode ? 'Enter Dev Mode' : 'Sign in'}
                             </motion.button>
@@ -221,7 +240,7 @@ export default function SignInPage() {
                                 Continue with Google
                             </button>
                         </motion.div>
-                        
+
                         {/* Developer Mode Toggle */}
                         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }} className="mt-4 text-center">
                             <button

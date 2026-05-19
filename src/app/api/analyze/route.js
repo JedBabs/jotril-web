@@ -98,12 +98,18 @@ export async function POST(req) {
                     // Small delay to ensure the frontend processes the early event quickly
                     await new Promise(r => setTimeout(r, 50));
 
-                    // Batch-query the model
+                    // Batch-query the model — stream progress from 40→70 as batches complete
                     sendEvent('progress', { progress: 40, step: "🔍 Distributed analysis across Jotril clusters..." });
                     const results = await batchQueryModel(
                         scenarios.map(s => s.text),
-                        5,
-                        500
+                        24,
+                        0,
+                        null,
+                        (pct, msg) => {
+                            // Map batch progress (0-100) into the 40-70 range for the UI
+                            const mappedProgress = 40 + Math.round(pct * 0.30);
+                            sendEvent('progress', { progress: mappedProgress, step: `🔍 ${msg}...` });
+                        }
                     );
 
                     sendEvent('progress', { progress: 70, step: "Evaluating burstiness & complexity..." });
@@ -159,7 +165,7 @@ export async function POST(req) {
                         console.error('[Analyze] Error recording quota:', err);
                     });
 
-                    if (userId) {
+                    if (userId && userId !== 'dev-admin-id') {
                         try {
                             const prisma = getPrisma();
                             await prisma.scanResult.create({

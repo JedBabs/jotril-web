@@ -9,10 +9,9 @@ export default function DevDebugOverlay() {
     const [errors, setErrors] = useState([]);
     const [isOpen, setIsOpen] = useState(false);
 
-    // Only render for DEV session
-    if (!session?.user?.isDev) return null;
-
     useEffect(() => {
+        if (!session?.user?.isDev) return;
+
         // Intercept Window Errors
         const handleWindowError = (event) => {
             addError({
@@ -90,7 +89,7 @@ export default function DevDebugOverlay() {
             console.error = originalConsoleError;
             window.fetch = originalFetch;
         };
-    }, []);
+    }, [session?.user?.isDev]);
 
     const addError = (errObj) => {
         setErrors(prev => [errObj, ...prev].slice(0, 50)); // Keep last 50
@@ -102,9 +101,12 @@ export default function DevDebugOverlay() {
         setIsOpen(false);
     };
 
+    // Only render for DEV session
+    if (!session?.user?.isDev) return null;
+
     return (
         <div className="fixed bottom-4 left-4 z-[9999] font-mono text-sm">
-            <button 
+            <button
                 onClick={() => setIsOpen(!isOpen)}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg border transition-colors ${errors.length > 0 ? 'bg-red-900 border-red-500 text-red-100' : 'bg-gray-900 border-gray-600 text-gray-300'}`}
             >
@@ -118,7 +120,7 @@ export default function DevDebugOverlay() {
 
             <AnimatePresence>
                 {isOpen && (
-                    <motion.div 
+                    <motion.div
                         initial={{ opacity: 0, y: 10, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 10, scale: 0.95 }}
@@ -143,17 +145,17 @@ export default function DevDebugOverlay() {
                                             <span className="text-gray-500 text-xs">{new Date(err.time).toLocaleTimeString()}</span>
                                         </div>
                                         <div className="text-red-300 break-words font-semibold mb-2">{err.message}</div>
-                                        
+
                                         {err.url && (
                                             <div className="text-blue-300 text-xs mb-1 truncate">URL: {err.url}</div>
                                         )}
-                                        
+
                                         {err.responseBody && (
                                             <div className="bg-black/50 p-2 rounded border border-gray-800 text-xs text-gray-400 overflow-x-auto whitespace-pre">
                                                 {err.responseBody}
                                             </div>
                                         )}
-                                        
+
                                         {err.stack && (
                                             <details className="mt-2 text-xs text-gray-500">
                                                 <summary className="cursor-pointer hover:text-gray-400">View Stack Trace</summary>
