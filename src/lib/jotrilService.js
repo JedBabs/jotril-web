@@ -241,6 +241,7 @@ export async function batchQueryModel(texts, concurrency = 3, batchDelay = 300, 
     while (i < texts.length) {
         if (checkCancel) await checkCancel();
 
+        const batch = texts.slice(i, i + concurrency);
         let queriesCompletedInBatch = 0;
 
         const batchPromises = batch.map(async (text, index) => {
