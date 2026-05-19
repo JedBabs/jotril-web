@@ -17,7 +17,7 @@ function spaceToUrl(spaceName) {
 
 const MAX_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 1500;
-const QUERY_TIMEOUT_MS = 30000; // 30s hard timeout per individual model query
+const QUERY_TIMEOUT_MS = 90000; // 90s hard timeout per individual model query
 
 /**
  * Validates the HF_TOKEN by making a native fetch to a known space.
