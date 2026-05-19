@@ -228,90 +228,79 @@ export async function queryJotrilModel(text, preferredSpace = null, triedSpaces 
  * @returns {Promise<Array<{aiScore: number, humanScore: number, label: string} | null>>}
  */
 export async function batchQueryModel(texts, concurrency = 3, batchDelay = 300, checkCancel = null, onProgress = null) {
-    const results = [];
-    const MAX_BATCH_RETRIES = 3;
-    const totalBatches = Math.ceil(texts.length / concurrency);
-
-    let i = 0;
-    let batchRetryCount = 0;
+    const results = new Array(texts.length).fill(null);
+    let currentIndex = 0;
+    let completedCount = 0;
+    const MAX_RETRIES = 3;
 
     // Quick preflight to ensure token is valid before we kick off massive limits
     await checkHfToken();
 
-    while (i < texts.length) {
-        if (checkCancel) await checkCancel();
+    if (texts.length > 0) {
+        console.log(`[JotrilService] Spinning up ${Math.min(concurrency, texts.length)} concurrent sliding window workers...`);
+    }
 
-        const batch = texts.slice(i, i + concurrency);
-        let queriesCompletedInBatch = 0;
+    // The Sliding Window Worker Thread
+    const worker = async () => {
+        while (currentIndex < texts.length) {
+            if (checkCancel) await checkCancel();
 
-        const batchPromises = batch.map(async (text, index) => {
-            try {
-                // For batches (like in auto-tuning), we alternate spaces to ensure both clusters are fully utilized
-                const preferredSpace = SPACES[(i + index) % SPACES.length];
-                const result = await queryJotrilModel(text, preferredSpace);
+            // Claim the next query index atomically
+            const idx = currentIndex++;
+            const text = texts[idx];
+            let retryCount = 0;
 
-                // Track granular live progress per active query rather than waiting for the batch block to end
-                queriesCompletedInBatch++;
-                if (onProgress) {
-                    const totalCompleted = i + queriesCompletedInBatch;
-                    const pct = Math.round((totalCompleted / texts.length) * 100);
-                    onProgress(pct, `Query ${totalCompleted}/${texts.length}`);
+            while (retryCount <= MAX_RETRIES) {
+                try {
+                    // Alternate spaces effectively across the sliding window
+                    const preferredSpace = SPACES[(idx) % SPACES.length];
+                    results[idx] = await queryJotrilModel(text, preferredSpace);
+                    break; // Success, break retry loop
+                } catch (error) {
+                    if (error instanceof JotrilServiceError) {
+                        if (error.type === 'COLD_START') {
+                            retryCount++;
+                            if (retryCount > MAX_RETRIES) throw new Error(`Query failed after ${MAX_RETRIES} retries. Jotril engine clusters may be permanently offline.`);
+                            console.warn(`⏳ [JotrilService] Query encountered COLD_START. Waiting 30s before retrying (${retryCount}/${MAX_RETRIES})...`);
+                            for (let s = 0; s < 30; s++) { if (checkCancel) await checkCancel(); await new Promise(r => setTimeout(r, 1000)); }
+                            continue;
+                        } else if (error.type === 'RATE_LIMITED') {
+                            retryCount++;
+                            if (retryCount > MAX_RETRIES) throw new Error(`Query failed after ${MAX_RETRIES} retries due to strict HuggingFace limit.`);
+                            console.warn(`⏳ [JotrilService] Query RATE_LIMITED. Waiting 10s before retrying (${retryCount}/${MAX_RETRIES})...`);
+                            for (let s = 0; s < 10; s++) { if (checkCancel) await checkCancel(); await new Promise(r => setTimeout(r, 1000)); }
+                            continue;
+                        } else if (error.type === 'AUTH_ERROR') {
+                            throw error; // Fatal
+                        }
+                    }
+                    console.error('[JotrilService] Query item failed:', error.message);
+                    results[idx] = null;
+                    break; // Unrecoverable error (e.g. timeout), mark null and process next
                 }
-
-                return result;
-            } catch (error) {
-                if (error instanceof JotrilServiceError &&
-                    (error.type === 'COLD_START' || error.type === 'RATE_LIMITED' || error.type === 'AUTH_ERROR')) {
-                    throw error; // Bubble up to while loop for retry
-                }
-                console.error('[JotrilService] Batch item failed:', error.message);
-
-                queriesCompletedInBatch++; // Process failed, but it's done pending state
-                return null;
             }
-        });
 
-        try {
-            const currentBatchNum = Math.floor(i / concurrency) + 1;
-            if (currentBatchNum % 5 === 0 || currentBatchNum === 1) {
-                console.log(`[JotrilService] Processing batch ${currentBatchNum}/${totalBatches} (${batch.length} queries)`);
+            // Immediately dispatch live progress and free up the worker slot
+            completedCount++;
+            if (onProgress) {
+                const pct = Math.round((completedCount / texts.length) * 100);
+                onProgress(pct, `Query ${completedCount}/${texts.length}`);
             }
-            const batchResults = await Promise.all(batchPromises);
-            results.push(...batchResults);
 
-            i += concurrency; // Advance to next batch only on success
-            batchRetryCount = 0; // Reset retries on success
-
-            if (i < texts.length && batchDelay > 0) {
+            if (batchDelay > 0) {
                 await new Promise(resolve => setTimeout(resolve, batchDelay));
             }
-        } catch (error) {
-            batchRetryCount++;
-            if (batchRetryCount > MAX_BATCH_RETRIES) {
-                throw new Error(`Batch failed after ${MAX_BATCH_RETRIES} retries. Jotril engine clusters may be permanently offline.`);
-            }
-
-            if (error instanceof JotrilServiceError && error.type === 'COLD_START') {
-                console.warn(`⏳ [JotrilService] Batch encountered COLD_START. Waiting 30s before retrying (${batchRetryCount}/${MAX_BATCH_RETRIES})...`);
-                // Sleep in 1s increments to allow fast cancellation
-                for (let sleepSec = 0; sleepSec < 30; sleepSec++) {
-                    if (checkCancel) await checkCancel();
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-                // i is not incremented, so the exact same batch retries
-                continue;
-            } else if (error instanceof JotrilServiceError && error.type === 'RATE_LIMITED') {
-                console.warn(`⏳ [JotrilService] Batch encountered RATE_LIMITED. Waiting 10s before retrying (${batchRetryCount}/${MAX_BATCH_RETRIES})...`);
-                for (let sleepSec = 0; sleepSec < 10; sleepSec++) {
-                    if (checkCancel) await checkCancel();
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-                continue;
-            } else {
-                throw error; // Auth errors or unknown fatal errors
-            }
         }
+    };
+
+    // Spin up concurrent worker fleet
+    const workers = [];
+    for (let i = 0; i < Math.min(concurrency, texts.length); i++) {
+        workers.push(worker());
     }
+
+    // Wait for the entire pool to drain
+    await Promise.all(workers);
 
     return results;
 }

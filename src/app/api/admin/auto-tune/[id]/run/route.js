@@ -89,6 +89,10 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
         const dataset = await prisma.tuningDataset.findUnique({ where: { id: datasetId } });
         let cache;
 
+        // ── Time-based throttle to avoid hammering the DB ──
+        let lastDbUpdate = Date.now();
+        const DB_UPDATE_INTERVAL_MS = 1000; // Update DB at most every 1 second
+
         if (dataset.scoreCache) {
             cache = dataset.scoreCache;
         } else {
@@ -99,10 +103,18 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
 
             cache = await buildScoreCache(documents, async (progress, status) => {
                 await assertNotCancelled();
-                await prisma.tuningRun.update({
-                    where: { id: runId },
-                    data: { status: 'CACHING', progress: Math.max(10, progress), error: null, message: status }
-                });
+                const now = Date.now();
+                if (now - lastDbUpdate >= DB_UPDATE_INTERVAL_MS || progress >= 99) {
+                    lastDbUpdate = now;
+                    try {
+                        await prisma.tuningRun.update({
+                            where: { id: runId },
+                            data: { status: 'CACHING', progress: Math.max(10, progress), error: null, message: status }
+                        });
+                    } catch (dbErr) {
+                        console.warn(`[Auto-Tune] Cache progress update failed:`, dbErr.message);
+                    }
+                }
             });
 
             await prisma.tuningDataset.update({
@@ -135,10 +147,6 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
             data: { status: 'TUNING', progress: 0, message: '🧠 Optimizing 50,000+ configurations (Phase 2)...' }
         });
 
-        // Time-based throttle to avoid hammering the DB
-        let lastDbUpdate = Date.now();
-        const DB_UPDATE_INTERVAL_MS = 3000; // Update DB at most every 3 seconds
-
         const searchResult = await runExhaustiveSearch(cache, async (progress, status, trialsRun) => {
             await assertNotCancelled();
             const now = Date.now();
@@ -154,7 +162,7 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
                         }
                     });
                 } catch (dbErr) {
-                    console.warn(`[Auto-Tune] Progress update failed (non-fatal):`, dbErr.message);
+                    console.warn(`[Auto-Tune] Grid search progress update failed:`, dbErr.message);
                 }
             }
         }, deadline);
