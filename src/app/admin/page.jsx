@@ -622,6 +622,7 @@ function AutoTunePanel() {
     const [activeRunId, setActiveRunId] = useState(null);
     const [runProgress, setRunProgress] = useState(null);
     const [isApplying, setIsApplying] = useState(null); // stores dataset ID being applied
+    const [isReverting, setIsReverting] = useState(false); // revert in-progress flag
     const [isDeleting, setIsDeleting] = useState(null); // stores dataset ID being deleted
     const [hasLocalDataset, setHasLocalDataset] = useState(false);
     const [debugPath, setDebugPath] = useState('');
@@ -862,6 +863,25 @@ function AutoTunePanel() {
         } catch (err) {
             showToast('Network error applying config', 'error');
             setIsApplying(null);
+        }
+    };
+
+    const handleRevert = async () => {
+        if (!confirm('Revert the engine to the previous configuration? This will undo the last applied auto-tune.')) return;
+        setIsReverting(true);
+        try {
+            const res = await fetch('/api/admin/config', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                showToast('Engine reverted to previous config!', 'success');
+                setTimeout(() => window.location.reload(), 1500);
+            } else {
+                showToast(data.error || 'Revert failed', 'error');
+                setIsReverting(false);
+            }
+        } catch (err) {
+            showToast('Network error reverting config', 'error');
+            setIsReverting(false);
         }
     };
 
@@ -1137,10 +1157,26 @@ function AutoTunePanel() {
                                             </div>
 
                                             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                                                <div className="p-4 border border-silver rounded-xl text-center">
-                                                    <div className="text-[10px] uppercase font-bold text-ash mb-1">Accuracy</div>
-                                                    <div className="text-2xl font-black text-navy">{ds.latestRun.bestAccuracy}%</div>
-                                                </div>
+                                                {/* Train/Test Split — shown when available */}
+                                                {ds.latestRun.metrics?.test ? (
+                                                    <>
+                                                        <div className="p-4 border border-accent-blue/20 bg-accent-blue/5 rounded-xl text-center">
+                                                            <div className="text-[10px] uppercase font-bold text-accent-blue mb-1">Train Accuracy</div>
+                                                            <div className="text-2xl font-black text-accent-blue">{ds.latestRun.metrics.train?.accuracy}%</div>
+                                                            <div className="text-[9px] text-ash mt-1">{ds.latestRun.metrics.splitInfo?.trainSize} samples</div>
+                                                        </div>
+                                                        <div className="p-4 border border-score-human/20 bg-score-human/5 rounded-xl text-center shadow-[0_2px_10px_rgba(16,185,129,0.1)]">
+                                                            <div className="text-[10px] uppercase font-bold text-score-human mb-1">Test Accuracy</div>
+                                                            <div className="text-2xl font-black text-score-human">{ds.latestRun.metrics.test?.accuracy}%</div>
+                                                            <div className="text-[9px] text-ash mt-1">{ds.latestRun.metrics.splitInfo?.testSize} samples</div>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <div className="p-4 border border-silver rounded-xl text-center">
+                                                        <div className="text-[10px] uppercase font-bold text-ash mb-1">Accuracy</div>
+                                                        <div className="text-2xl font-black text-navy">{ds.latestRun.bestAccuracy}%</div>
+                                                    </div>
+                                                )}
                                                 <div className="p-4 border border-accent-purple/20 bg-accent-purple/5 rounded-xl text-center shadow-[0_2px_10px_rgba(168,85,247,0.1)]">
                                                     <div className="text-[10px] uppercase font-bold text-accent-purple mb-1">MCC Score</div>
                                                     <div className="text-2xl font-black text-accent-purple">{ds.latestRun.bestMcc}</div>
@@ -1148,12 +1184,12 @@ function AutoTunePanel() {
                                                 {/* Before/After Comparison */}
                                                 {ds.latestRun.metrics?.baseline && (
                                                     <div className="col-span-1 md:col-span-2 p-4 border border-score-human/20 bg-score-human/5 rounded-xl">
-                                                        <div className="text-[10px] uppercase font-bold text-score-human mb-2">Improvement Over Baseline</div>
+                                                        <div className="text-[10px] uppercase font-bold text-score-human mb-2">vs Baseline (Before Tuning)</div>
                                                         <div className="grid grid-cols-2 gap-4">
                                                             <div className="text-center">
                                                                 <div className="text-[9px] text-ash font-bold">Accuracy</div>
                                                                 <div className="text-sm font-mono font-bold text-navy">
-                                                                    {ds.latestRun.metrics.baseline.accuracy}% → <span className="text-score-human">{ds.latestRun.bestAccuracy}%</span>
+                                                                    {ds.latestRun.metrics.baseline.accuracy}% → <span className="text-score-human">{ds.latestRun.metrics.test?.accuracy ?? ds.latestRun.bestAccuracy}%</span>
                                                                 </div>
                                                             </div>
                                                             <div className="text-center">
@@ -1187,7 +1223,24 @@ function AutoTunePanel() {
                                                 </div>
                                             </div>
 
-                                            <div className="flex justify-end">
+                                            <div className="flex justify-end gap-3">
+                                                <button
+                                                    onClick={handleRevert}
+                                                    disabled={isReverting || isApplying !== null || activeRunId !== null}
+                                                    className="flex items-center gap-2 text-sm font-bold text-ash hover:text-score-ai bg-white border border-silver hover:border-score-ai/30 rounded-xl px-5 py-2.5 transition-colors disabled:opacity-40"
+                                                >
+                                                    {isReverting ? (
+                                                        <>
+                                                            <RotateCcw className="w-4 h-4 animate-spin" />
+                                                            Reverting...
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Undo2 className="w-4 h-4" />
+                                                            Revert to Previous
+                                                        </>
+                                                    )}
+                                                </button>
                                                 <button
                                                     onClick={() => applyConfig(ds.id)}
                                                     disabled={isApplying !== null || activeRunId !== null}

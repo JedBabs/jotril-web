@@ -150,12 +150,17 @@ export async function buildScoreCache(documents, onProgress, checkCancel = null)
     });
 
     // Step 6: Reconstruct the original document structures for the Engine
+    // Strip the heavy "text" property from scenarios to keep database cache footprint minimal (~90% reduction)
     for (let i = 0; i < allDocItems.length; i++) {
         const item = allDocItems[i];
         const scores = item.queryMap.map((entry) => textDedup.get(entry.normalized));
 
         cache.push({
-            scenarios: item.scenarios,
+            scenarios: item.scenarios.map(s => ({
+                type: s.type,
+                sentenceIndices: s.sentenceIndices,
+                paragraphIndex: s.paragraphIndex
+            })),
             sentences: item.sentences,
             scores,
             label: item.doc.label,
@@ -196,7 +201,7 @@ export function evaluateConfig(cache, candidateConfig) {
         // Run the attribution pipeline
         const burstinessNudge = calculateBurstinessNudge(doc.sentences, engineCfg);
         const rawChunks = attributeScoresToSentences(
-            doc.sentences, doc.scenarios, doc.scores, burstinessNudge, engineCfg
+            doc.sentences, doc.scenarios, doc.scores, burstinessNudge, engineCfg, doc.sentenceToScenarioMap
         );
         const smoothedChunks = contextualSmooth(rawChunks, engineCfg);
         const { breakdown, overallLabel } = classifyResults(smoothedChunks, engineCfg);
@@ -353,20 +358,68 @@ function cloneConfig(cfg) {
 }
 
 /**
- * Runs the full 3-phase exhaustive grid search.
+ * Runs the full 3-phase exhaustive grid search with train/test split.
  *
  * Phase 1 (Coarse): Sweep the 6 most impactful parameters with large steps
  * Phase 2 (Medium): Zoom into the best region across all parameters
  * Phase 3 (Fine):   Surgical ±1 fine-step sweep around the single best
  *
+ * The cache is split 80/20 (stratified by label) so the grid search trains
+ * on 80% and the final metrics are validated on the held-out 20%.
+ *
  * @param {Array} cache - Score cache from buildScoreCache()
  * @param {(progress: number, status: string, trialsRun: number) => void} onProgress
  * @param {number} deadline - Optional UNIX timestamp describing when to forcefully terminate the search
- * @returns {{ bestConfig, bestMetrics, trialCount, topTrials }}
+ * @returns {{ bestConfig, bestMetrics, trainMetrics, testMetrics, trialCount, topTrials }}
  */
 export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
+    // ── Train/Test Split (80/20, stratified by label) ─────────────────
+    const humanDocs = cache.filter(d => d.label === 'human');
+    const aiDocs = cache.filter(d => d.label === 'ai');
+
+    // Deterministic shuffle using index-based hash
+    const deterministicShuffle = (arr) => {
+        const copy = [...arr];
+        for (let i = copy.length - 1; i > 0; i--) {
+            const j = (i * 2654435761) % (i + 1);
+            [copy[i], copy[j]] = [copy[j], copy[i]];
+        }
+        return copy;
+    };
+
+    const shuffledHuman = deterministicShuffle(humanDocs);
+    const shuffledAI = deterministicShuffle(aiDocs);
+
+    const humanSplit = Math.round(shuffledHuman.length * 0.8);
+    const aiSplit = Math.round(shuffledAI.length * 0.8);
+
+    const trainCache = [...shuffledHuman.slice(0, humanSplit), ...shuffledAI.slice(0, aiSplit)];
+    const testCache = [...shuffledHuman.slice(humanSplit), ...shuffledAI.slice(aiSplit)];
+
+    console.log(`[Auto-Tune] Split: ${trainCache.length} train (${humanSplit}H/${aiSplit}A) | ${testCache.length} test (${shuffledHuman.length - humanSplit}H/${shuffledAI.length - aiSplit}A)`);
+
+    // Build sentenceToScenarioMap on the fly for each document to speed up evaluateConfig by 10x-50x
+    for (const doc of cache) {
+        if (!doc.sentenceToScenarioMap || !doc.sentenceToScenarioMap[0] || !doc.sentenceToScenarioMap[0].withSentence) {
+            doc.sentenceToScenarioMap = doc.sentences.map((_, sentenceIdx) => {
+                const withSentence = [];
+                const withoutSentence = [];
+                doc.scenarios.forEach((scenario, idx) => {
+                    const includes = scenario.sentenceIndices.includes(sentenceIdx);
+                    if (includes) {
+                        withSentence.push({ scenario, idx });
+                    } else {
+                        withoutSentence.push({ scenario, idx });
+                    }
+                });
+                return { withSentence, withoutSentence };
+            });
+        }
+    }
+
+    // Use trainCache for grid search optimization
     let bestConfig = getBaseConfig();
-    let bestMetrics = evaluateConfig(cache, bestConfig);
+    let bestMetrics = evaluateConfig(trainCache, bestConfig);
     let bestScore = bestMetrics.mcc;
     let totalTrials = 0;
     const topTrials = []; // Keep top 20
@@ -430,7 +483,7 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
         // Enforce constraint: humanMax < mixedMax
         if (candidate.classification.humanMax >= candidate.classification.mixedMax) continue;
 
-        const metrics = evaluateConfig(cache, candidate);
+        const metrics = evaluateConfig(trainCache, candidate);
         recordTrial(candidate, metrics);
         await maybeYield();
 
@@ -477,7 +530,7 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
             if (candidate.classification.humanMax >= candidate.classification.mixedMax) continue;
             if (candidate.burstiness.lowThreshold >= candidate.burstiness.highThreshold) continue;
 
-            const metrics = evaluateConfig(cache, candidate);
+            const metrics = evaluateConfig(trainCache, candidate);
             recordTrial(candidate, metrics);
             await maybeYield();
         }
@@ -534,7 +587,7 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
                 if (candidate.classification.humanMax >= candidate.classification.mixedMax) continue;
                 if (candidate.burstiness.lowThreshold >= candidate.burstiness.highThreshold) continue;
 
-                const metrics = evaluateConfig(cache, candidate);
+                const metrics = evaluateConfig(trainCache, candidate);
                 recordTrial(candidate, metrics);
                 await maybeYield();
             }
@@ -581,7 +634,7 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
                 if (candidate.classification.humanMax >= candidate.classification.mixedMax) continue;
                 if (candidate.burstiness.lowThreshold >= candidate.burstiness.highThreshold) continue;
 
-                const metrics = evaluateConfig(cache, candidate);
+                const metrics = evaluateConfig(trainCache, candidate);
                 const prevBest = bestScore;
                 recordTrial(candidate, metrics);
                 if (bestScore > prevBest) improved = true;
@@ -607,13 +660,30 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
     // Sort final top trials
     topTrials.sort((a, b) => b.mcc - a.mcc);
 
-    await onProgress?.(100, `Complete! ${totalTrials} configs evaluated. Best MCC: ${bestScore.toFixed(4)}`, totalTrials);
+    // ── Final Validation: evaluate best config on held-out test set ────
+    const trainMetrics = evaluateConfig(trainCache, bestConfig);
+    const testMetrics = evaluateConfig(testCache, bestConfig);
+    const fullMetrics = evaluateConfig(cache, bestConfig); // full dataset for reference
+
+    console.log(`[Auto-Tune] Final Validation:`);
+    console.log(`  Train (${trainCache.length} docs): Acc=${trainMetrics.accuracy}%, MCC=${trainMetrics.mcc}`);
+    console.log(`  Test  (${testCache.length} docs):  Acc=${testMetrics.accuracy}%, MCC=${testMetrics.mcc}`);
+    console.log(`  Full  (${cache.length} docs):      Acc=${fullMetrics.accuracy}%, MCC=${fullMetrics.mcc}`);
+
+    await onProgress?.(100, `Complete! ${totalTrials} configs | Train: ${trainMetrics.accuracy}% | Test: ${testMetrics.accuracy}%`, totalTrials);
 
     return {
         bestConfig,
-        bestMetrics,
+        bestMetrics: fullMetrics,     // Overall on full dataset
+        trainMetrics,                 // Training set performance
+        testMetrics,                  // Held-out test set performance (generalization)
         trialCount: totalTrials,
         topTrials: topTrials.slice(0, 20),
+        splitInfo: {
+            trainSize: trainCache.length,
+            testSize: testCache.length,
+            totalSize: cache.length,
+        },
     };
 }
 

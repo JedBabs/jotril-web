@@ -366,22 +366,40 @@ function computeDirectSignal(windowHits, cfg = SIGNAL_CONFIG) {
  * @param {number[]} allScores - Parallel scores array
  * @returns {number} 0-100 score (50 = neutral/no data)
  */
-function computeDifferentialSignal(sentenceIdx, scenarios, allScores, cfg = SIGNAL_CONFIG) {
+function computeDifferentialSignal(sentenceIdx, scenarios, allScores, cfg = SIGNAL_CONFIG, sentenceToScenarioMap = null) {
     const conf = cfg.windowConfidence || SIGNAL_CONFIG.windowConfidence;
     const deltas = [];
 
     // Build index: which scenarios contain this sentence, which don't
-    const withSentence = [];
-    const withoutSentence = [];
+    let withSentence = [];
+    let withoutSentence = [];
 
-    scenarios.forEach((scenario, idx) => {
-        const includes = scenario.sentenceIndices.includes(sentenceIdx);
-        if (includes) {
-            withSentence.push({ scenario, idx, score: allScores[idx] || 0 });
-        } else {
-            withoutSentence.push({ scenario, idx, score: allScores[idx] || 0 });
+    if (sentenceToScenarioMap && sentenceToScenarioMap[sentenceIdx]) {
+        const mapped = sentenceToScenarioMap[sentenceIdx];
+        const withLen = mapped.withSentence.length;
+        const withoutLen = mapped.withoutSentence.length;
+
+        withSentence = new Array(withLen);
+        for (let i = 0; i < withLen; i++) {
+            const h = mapped.withSentence[i];
+            withSentence[i] = { scenario: h.scenario, idx: h.idx, score: allScores[h.idx] || 0 };
         }
-    });
+
+        withoutSentence = new Array(withoutLen);
+        for (let i = 0; i < withoutLen; i++) {
+            const h = mapped.withoutSentence[i];
+            withoutSentence[i] = { scenario: h.scenario, idx: h.idx, score: allScores[h.idx] || 0 };
+        }
+    } else {
+        scenarios.forEach((scenario, idx) => {
+            const includes = scenario.sentenceIndices.includes(sentenceIdx);
+            if (includes) {
+                withSentence.push({ scenario, idx, score: allScores[idx] || 0 });
+            } else {
+                withoutSentence.push({ scenario, idx, score: allScores[idx] || 0 });
+            }
+        });
+    }
 
     // Find delta pairs: two windows that differ by exactly this sentence
     // A window W1 (with S) and W2 (without S) form a pair if:
@@ -510,7 +528,7 @@ function computeAnchorSignal(windowHits, cfg = SIGNAL_CONFIG) {
  * @param {number} burstinessNudge - Document-level burstiness adjustment (0-10)
  * @returns {Array<{text: string, score: number}>}
  */
-export function attributeScoresToSentences(sentences, scenarios, scores, burstinessNudge = 0, engineCfg = null) {
+export function attributeScoresToSentences(sentences, scenarios, scores, burstinessNudge = 0, engineCfg = null, sentenceToScenarioMap = null) {
     const cfg = engineCfg || SIGNAL_CONFIG;
 
     // Pre-apply burstiness nudge to all scores (mutates a copy, not the original)
@@ -521,16 +539,30 @@ export function attributeScoresToSentences(sentences, scenarios, scores, burstin
 
     return sentences.map((sentence, sentenceIdx) => {
         // Collect all window hits for this sentence
-        const windowHits = [];
-        scenarios.forEach((scenario, scenarioIdx) => {
-            if (scenario.sentenceIndices.includes(sentenceIdx)) {
-                windowHits.push({
-                    score: adjustedScores[scenarioIdx],
-                    type: scenario.type,
-                    scenarioIdx
-                });
+        let windowHits = [];
+        if (sentenceToScenarioMap && sentenceToScenarioMap[sentenceIdx]) {
+            const mappedHits = sentenceToScenarioMap[sentenceIdx].withSentence;
+            const mappedLen = mappedHits.length;
+            windowHits = new Array(mappedLen);
+            for (let i = 0; i < mappedLen; i++) {
+                const hit = mappedHits[i];
+                windowHits[i] = {
+                    score: adjustedScores[hit.idx],
+                    type: hit.scenario.type,
+                    scenarioIdx: hit.idx
+                };
             }
-        });
+        } else {
+            scenarios.forEach((scenario, scenarioIdx) => {
+                if (scenario.sentenceIndices.includes(sentenceIdx)) {
+                    windowHits.push({
+                        score: adjustedScores[scenarioIdx],
+                        type: scenario.type,
+                        scenarioIdx
+                    });
+                }
+            });
+        }
 
         if (windowHits.length === 0) {
             return { text: sentence + ' ', score: 0 };
@@ -538,7 +570,7 @@ export function attributeScoresToSentences(sentences, scenarios, scores, burstin
 
         // ── Compute three signals ────────────────────────────────────
         const directScore = computeDirectSignal(windowHits, cfg);
-        const differentialScore = computeDifferentialSignal(sentenceIdx, scenarios, adjustedScores, cfg);
+        const differentialScore = computeDifferentialSignal(sentenceIdx, scenarios, adjustedScores, cfg, sentenceToScenarioMap);
         const anchorScore = computeAnchorSignal(windowHits, cfg);
 
         // ── Blend signals using configured weights ───────────────────

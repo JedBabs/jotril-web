@@ -158,6 +158,7 @@ export async function GET(req) {
                         message: true,
                         bestAccuracy: true,
                         bestMcc: true,
+                        metrics: true,
                         trialCount: true,
                         createdAt: true,
                         completedAt: true,

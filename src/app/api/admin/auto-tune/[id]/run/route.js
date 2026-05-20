@@ -57,7 +57,6 @@ export async function POST(req, { params }) {
  */
 async function runTuningInBackground(runId, datasetId, rawSamples) {
     const startTime = Date.now();
-    const deadline = startTime + 270000; // 4.5 minutes (leaving 30s buffer before Vercel kills it)
 
     const prisma = getPrisma();
     console.log(`🚀 [Auto-Tune] Background run ${runId} started.`);
@@ -149,6 +148,10 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
         const baselineMetrics = evaluateConfig(cache, baselineConfig);
 
         // 4. Grid Search (now async — yields event loop and awaits progress callbacks)
+        // Deadline is set HERE (not at function start) so the grid search gets its own
+        // full time window, regardless of how long caching took.
+        const gridDeadline = Date.now() + 270000; // 4.5 minutes for grid search phase
+
         await prisma.tuningRun.update({
             where: { id: runId },
             data: { status: 'TUNING', progress: 0, message: '🧠 Optimizing 50,000+ configurations (Phase 2)...' }
@@ -172,32 +175,35 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
                     console.warn(`[Auto-Tune] Grid search progress update failed:`, dbErr.message);
                 }
             }
-        }, deadline);
+        }, gridDeadline);
 
         // 5. Final cancel check before writing COMPLETE (don't resurrect a cancelled run)
         await assertNotCancelled();
 
-        // 6. Finalize — include baseline metrics for before/after comparison
+        // 6. Finalize — include baseline and train/test metrics for before/after comparison
         await prisma.tuningRun.update({
             where: { id: runId },
             data: {
                 status: 'COMPLETE',
                 progress: 100,
                 bestConfig: searchResult.bestConfig,
-                bestAccuracy: searchResult.bestMetrics.accuracy,
-                bestMcc: searchResult.bestMetrics.mcc,
+                bestAccuracy: searchResult.testMetrics?.accuracy ?? searchResult.bestMetrics.accuracy,
+                bestMcc: searchResult.testMetrics?.mcc ?? searchResult.bestMetrics.mcc,
                 metrics: {
                     ...searchResult.bestMetrics,
                     baseline: baselineMetrics,
+                    train: searchResult.trainMetrics,
+                    test: searchResult.testMetrics,
+                    splitInfo: searchResult.splitInfo,
                 },
                 trialCount: searchResult.trialCount,
                 log: searchResult.topTrials,
                 completedAt: new Date(),
-                message: `✅ Complete! Accuracy: ${baselineMetrics.accuracy}% → ${searchResult.bestMetrics.accuracy}% | MCC: ${baselineMetrics.mcc} → ${searchResult.bestMetrics.mcc}`
+                message: `✅ ${searchResult.trialCount} trials | Train: ${searchResult.trainMetrics?.accuracy}% | Test: ${searchResult.testMetrics?.accuracy}% | MCC: ${searchResult.testMetrics?.mcc}`
             }
         });
 
-        console.log(`✅ [Auto-Tune] Background run ${runId} complete. Baseline: ${baselineMetrics.accuracy}% → Best: ${searchResult.bestMetrics.accuracy}%`);
+        console.log(`✅ [Auto-Tune] Background run ${runId} complete. Train: ${searchResult.trainMetrics?.accuracy}% | Test: ${searchResult.testMetrics?.accuracy}%`);
 
     } catch (error) {
         if (error.message === 'CANCELLED') {
@@ -286,7 +292,7 @@ export async function GET(req, { params }) {
                     clearInterval(pollInterval);
                     controller.close();
                 }
-            }, 2500); // Poll DB every 2.5 seconds for SSE relay
+            }, 5000); // Poll DB every 5 seconds for SSE relay
 
             req.signal.addEventListener('abort', () => clearInterval(pollInterval));
         }
