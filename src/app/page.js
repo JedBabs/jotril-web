@@ -244,6 +244,7 @@ export default function Home() {
         }
 
         openProcess("analyze", "Analyzing Scope", "Initializing Jotril Engine...");
+        setScannedFile(file || null);
 
         try {
             let res;
@@ -656,7 +657,7 @@ export default function Home() {
                                     <motion.button
                                         whileHover={{ scale: 1.03 }}
                                         whileTap={{ scale: 0.98 }}
-                                        onClick={() => setResults(null)}
+                                        onClick={() => { setResults(null); setScannedFile(null); setSourceHtml(null); }}
                                         className="px-6 py-2.5 rounded-full font-bold text-sm bg-silver/30 hover:bg-silver/50 transition-colors"
                                         style={{ color: "var(--dyn-text-navy)" }}
                                     >

@@ -103,6 +103,7 @@ export default function EnhancedAccountPortal() {
             return showToast("Please enter text or upload a file first.", "warning");
         }
 
+        setScannedFile(file || null);
         openProcess("analyze", "🔍 Jotril is analyzing linguistic patterns...", "Connecting to Jotril core...");
 
         try {
@@ -392,7 +393,7 @@ export default function EnhancedAccountPortal() {
                                                 <motion.button
                                                     whileHover={{ scale: 1.05 }}
                                                     whileTap={{ scale: 0.95 }}
-                                                    onClick={() => setResults(null)}
+                                                    onClick={() => { setResults(null); setScannedFile(null); setSourceHtml(null); }}
                                                     className="px-5 py-2.5 glass-card rounded-xl font-bold text-xs"
                                                 >
                                                     New Scan
@@ -490,21 +491,34 @@ export default function EnhancedAccountPortal() {
                                                         whileHover={{ scale: 1.05 }}
                                                         whileTap={{ scale: 0.95 }}
                                                         onClick={async () => {
-                                                            openProcess("download", "Generating Report PDF", "Compiling styles & layout...");
+                                                            openProcess("download", "Generating Report PDF", "Fetching analysis data...");
                                                             simulateProgress([
-                                                                { progress: 30, duration: 300, step: "Extracting semantic tokens..." },
-                                                                { progress: 70, duration: 400, step: "Executing predictive layers..." }
+                                                                { progress: 20, duration: 200, step: "Retrieving chunks from database..." },
+                                                                { progress: 50, duration: 400, step: "Extracting semantic tokens..." },
+                                                                { progress: 80, duration: 300, step: "Executing predictive layers..." }
                                                             ]);
                                                             try {
+                                                                // Fetch full chunk data on demand since it's missing from the lightweight list view
+                                                                const res = await fetch(`/api/scan-results/${scan.id}`);
+                                                                const fullScan = await res.json();
+
+                                                                if (fullScan.error) {
+                                                                    showToast(fullScan.error, "error");
+                                                                    return;
+                                                                }
+
                                                                 const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
                                                                 libGen({
-                                                                    filename: scan.filename || 'Text_Scan',
-                                                                    breakdown: scan.breakdown || {},
-                                                                    overallLabel: scan.overallLabel || "",
-                                                                    chunks: scan.chunks || [],
-                                                                    sentenceCount: scan.sentenceCount || 0,
-                                                                    wordCount: scan.wordCount || 0
+                                                                    filename: fullScan.filename || 'Text_Scan',
+                                                                    breakdown: fullScan.breakdown || {},
+                                                                    overallLabel: fullScan.overallLabel || "",
+                                                                    chunks: fullScan.chunks || [],
+                                                                    sentenceCount: fullScan.sentenceCount || 0,
+                                                                    wordCount: fullScan.wordCount || 0
                                                                 });
+                                                            } catch (err) {
+                                                                showToast("Failed to generate PDF.", "error");
+                                                                console.error(err);
                                                             } finally {
                                                                 closeProcess();
                                                             }
