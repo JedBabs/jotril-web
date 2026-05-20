@@ -29,8 +29,21 @@ export const authOptions = {
             async authorize(credentials, req) {
                 if (credentials?.devPin) {
                     // We use an environment variable for the dev pin. If not set, default to a secure fallback or just reject.
-                    const expectedPin = process.env.DEV_PIN || 'antigravity-debug'; 
+                    const expectedPin = process.env.DEV_PIN || 'antigravity-debug';
                     if (credentials.devPin === expectedPin) {
+                        // Ensure a real DB user exists for dev-admin so FK constraints work
+                        const devPrisma = getPrisma();
+                        await devPrisma.user.upsert({
+                            where: { id: 'dev-admin-id' },
+                            update: {},
+                            create: {
+                                id: 'dev-admin-id',
+                                name: 'Dev Admin',
+                                email: 'dev@antigravity.local',
+                                role: 'ADMIN',
+                                emailVerified: new Date(),
+                            }
+                        });
                         return {
                             id: 'dev-admin-id',
                             name: 'Dev Admin',

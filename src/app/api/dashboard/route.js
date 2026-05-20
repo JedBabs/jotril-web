@@ -18,19 +18,18 @@ export async function GET(req) {
         const prisma = getPrisma();
         const userId = session.user.id;
 
-        // Bypass for Dev Admin (who doesn't exist in the database)
+        // Dev Admin: ensure the DB user exists (in case they haven't re-logged since the update)
         if (userId === 'dev-admin-id') {
-            return NextResponse.json({
-                totalRequests: 0,
-                totalPointsSpent: 0,
-                keyCount: 0,
-                tier: 'ADMIN',
-                purchasedPoints: 999999,
-                email: 'dev@antigravity.local',
-                name: 'Dev Admin',
-                memberSince: new Date().toISOString(),
-                recentScans: [],
-                pastScanResults: []
+            await prisma.user.upsert({
+                where: { id: 'dev-admin-id' },
+                update: {},
+                create: {
+                    id: 'dev-admin-id',
+                    name: 'Dev Admin',
+                    email: 'dev@antigravity.local',
+                    role: 'ADMIN',
+                    emailVerified: new Date(),
+                }
             });
         }
 

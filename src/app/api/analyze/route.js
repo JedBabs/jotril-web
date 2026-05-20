@@ -165,7 +165,8 @@ export async function POST(req) {
                         console.error('[Analyze] Error recording quota:', err);
                     });
 
-                    if (userId && userId !== 'dev-admin-id') {
+                    // Save scan result for all authenticated users
+                    if (userId) {
                         try {
                             const prisma = getPrisma();
                             await prisma.scanResult.create({
