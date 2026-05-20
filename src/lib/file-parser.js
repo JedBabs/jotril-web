@@ -60,7 +60,25 @@ export async function extractHtmlFromDocument(buffer, mimeType) {
         mimeType === 'application/msword'
     ) {
         try {
-            const result = await mammoth.convertToHtml({ buffer });
+            const options = {
+                styleMap: [
+                    "p[style-name='Heading 1'] => h1:fresh",
+                    "p[style-name='Heading 2'] => h2:fresh",
+                    "p[style-name='Heading 3'] => h3:fresh",
+                    "p[style-name='Heading 4'] => h4:fresh",
+                    "p[style-name='Heading 5'] => h5:fresh",
+                    "p[style-name='Heading 6'] => h6:fresh",
+                    "p[style-name='Title'] => h1.docx-title:fresh",
+                    "p[style-name='Subtitle'] => p.docx-subtitle:fresh",
+                    "p[alignment='left'] => p.align-left:fresh",
+                    "p[alignment='center'] => p.align-center:fresh",
+                    "p[alignment='right'] => p.align-right:fresh",
+                    "p[alignment='both'] => p.align-justify:fresh",
+                    "p[alignment='justify'] => p.align-justify:fresh"
+                ],
+                preserveEmptyParagraphs: true
+            };
+            const result = await mammoth.convertToHtml({ buffer }, options);
             return result.value || null;
         } catch (error) {
             console.error('[FileParser] DOCX HTML extraction failed:', error);

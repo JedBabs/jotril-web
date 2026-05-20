@@ -1,40 +1,12 @@
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import html2pdf from 'html2pdf.js';
 
 /**
  * Premium PDF Report Generator for Jotril AI — V2 Formatting Engine
  * 
- * Two rendering paths:
- * A) HTML Path (DOCX): Parses sourceHtml DOM tree, walks elements, renders with
- *    proper fonts/sizes/indentation/tables + overlays chunk highlight colors.
- * B) Plain Text Fallback: Enhanced flat renderer with paragraph/bullet/heading detection.
+ * Uses html2pdf.js + html2canvas to perfectly preserve DOM formatting, 
+ * tables, charts, pictures, and styles from the source document, while
+ * overlaying the AI heatmap dynamically.
  */
-
-// ─── COLORS ─────────────────────────────────────────────────
-const COLORS = {
-    navy: [15, 23, 42],
-    ash: [100, 116, 139],
-    human: [16, 185, 129],
-    mixed: [245, 158, 11],
-    ai: [239, 68, 68],
-    bgLight: [248, 250, 252],
-    silver: [226, 232, 240],
-    white: [255, 255, 255],
-};
-
-function blendHighlight(rgb, alpha) {
-    return [
-        Math.round(255 * (1 - alpha) + rgb[0] * alpha),
-        Math.round(255 * (1 - alpha) + rgb[1] * alpha),
-        Math.round(255 * (1 - alpha) + rgb[2] * alpha),
-    ];
-}
-
-function getLabelColor(label) {
-    if (label === 'ai') return COLORS.ai;
-    if (label === 'mixed') return COLORS.mixed;
-    return null; // human gets no highlight
-}
 
 // ─── CHUNK-TO-CHARACTER MAP ─────────────────────────────────
 // Maps every character position in the full text to a chunk label.
@@ -49,32 +21,23 @@ function buildChunkMap(chunks) {
     return map;
 }
 
-// Fuzzy-forward match: walks through targetText and chunkMap simultaneously,
-// skipping whitespace mismatches to find the label for each character in targetText.
-// Robust against encoding drift (curly quotes, ligatures, em-dashes, etc.)
+// Fuzzy-forward match: walks through targetText and chunkMap simultaneously
 function matchTextToChunkMap(targetText, fullAnalysisText, chunkMap) {
-    const result = []; // label per char of targetText
-    let aPtr = 0; // pointer into fullAnalysisText / chunkMap
-
+    const result = [];
+    let aPtr = 0;
     for (let t = 0; t < targetText.length; t++) {
         const tChar = targetText[t];
-
-        // Skip whitespace differences in analysis text
         while (aPtr < fullAnalysisText.length && /\s/.test(fullAnalysisText[aPtr]) && !(/\s/.test(tChar))) {
             aPtr++;
         }
-        // Skip whitespace in target that doesn't have a match
         if (/\s/.test(tChar) && aPtr < fullAnalysisText.length && !(/\s/.test(fullAnalysisText[aPtr]))) {
             result.push(chunkMap[Math.max(0, aPtr - 1)] || 'human');
             continue;
         }
-
-        // Case-insensitive character comparison
         if (aPtr < fullAnalysisText.length && tChar.toLowerCase() === fullAnalysisText[aPtr].toLowerCase()) {
             result.push(chunkMap[aPtr] || 'human');
             aPtr++;
         } else {
-            // Try scanning ahead up to 20 chars for a match (encoding drift recovery)
             let found = false;
             const maxScan = Math.min(20, fullAnalysisText.length - aPtr);
             for (let scan = 1; scan <= maxScan; scan++) {
@@ -87,8 +50,6 @@ function matchTextToChunkMap(targetText, fullAnalysisText, chunkMap) {
                 }
             }
             if (!found) {
-                // Large-gap resync: grab next ~15 chars from target and search for them
-                // in the analysis text within a ±200 char window
                 const lookAhead = targetText.substring(t, t + 15).replace(/\s+/g, '').toLowerCase();
                 if (lookAhead.length >= 6) {
                     const searchStart = Math.max(0, aPtr - 30);
@@ -96,7 +57,6 @@ function matchTextToChunkMap(targetText, fullAnalysisText, chunkMap) {
                     const searchWindow = fullAnalysisText.substring(searchStart, searchEnd).replace(/\s+/g, '').toLowerCase();
                     const resyncIdx = searchWindow.indexOf(lookAhead.substring(0, 6));
                     if (resyncIdx >= 0) {
-                        // Walk the non-whitespace-stripped pointer to the resync point
                         let realIdx = searchStart;
                         let stripped = 0;
                         while (realIdx < searchEnd && stripped < resyncIdx) {
@@ -109,7 +69,6 @@ function matchTextToChunkMap(targetText, fullAnalysisText, chunkMap) {
                         continue;
                     }
                 }
-                // Fallback: use nearest label but do NOT advance aPtr (prevent desync snowball)
                 result.push(chunkMap[Math.min(aPtr, chunkMap.length - 1)] || 'human');
             }
         }
@@ -117,226 +76,17 @@ function matchTextToChunkMap(targetText, fullAnalysisText, chunkMap) {
     return result;
 }
 
-
-// ─── REPORT HEADER & SUMMARY ────────────────────────────────
-function renderReportHeader(doc, data, margin, pageWidth) {
-    let y = 25;
-
-    // Brand
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(24);
-    doc.setTextColor(...COLORS.navy);
-    doc.text("Jotril", margin, y);
-    const jw = doc.getTextWidth("Jotril");
-    doc.setTextColor(...COLORS.human);
-    doc.text("AI", margin + jw + 1, y);
-
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(...COLORS.ash);
-    doc.text("Premium AI Detection Report", margin, y + 8);
-    doc.text(`Date: ${data.date || new Date().toLocaleDateString()}`, pageWidth - margin, y, { align: 'right' });
-    y += 20;
-
-    // Divider
-    doc.setDrawColor(...COLORS.silver);
-    doc.line(margin, y, pageWidth - margin, y);
-    y += 15;
-
-    // Document Assessment Banner
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.setTextColor(...COLORS.navy);
-    doc.text("Document Assessment", margin, y);
-    y += 10;
-
-    const { breakdown, overallLabel } = data;
-    const assessmentColor = breakdown.ai >= 60 ? COLORS.ai :
-        (breakdown.ai >= 30 || breakdown.mixed >= 40) ? COLORS.mixed : COLORS.human;
-
-    const contentWidth = pageWidth - (margin * 2);
-    doc.setFillColor(...assessmentColor);
-    doc.roundedRect(margin, y, contentWidth, 12, 2, 2, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(11);
-    doc.text(overallLabel.toUpperCase(), margin + (contentWidth / 2), y + 7.5, { align: 'center' });
-    y += 22;
-
-    // Stats
-    doc.setFontSize(10);
-    doc.setTextColor(...COLORS.ash);
-    doc.text("STATISTICS", margin, y);
-    y += 8;
-
-    const colWidth = contentWidth / 3;
-    const drawStat = (label, value, x) => {
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(16);
-        doc.setTextColor(...COLORS.navy);
-        doc.text(String(value), x, y + 10);
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(9);
-        doc.setTextColor(...COLORS.ash);
-        doc.text(label.toUpperCase(), x, y + 16);
-    };
-
-    const fname = data.filename.length > 20 ? data.filename.substring(0, 17) + "..." : data.filename;
-    drawStat("Sentences", data.sentenceCount, margin);
-    drawStat("Words", data.wordCount, margin + colWidth);
-    drawStat("File", fname, margin + (colWidth * 2));
-    y += 30;
-
-    // Composition Breakdown Bar
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(...COLORS.ash);
-    doc.text("COMPOSITION BREAKDOWN", margin, y);
-    y += 6;
-
-    let currentX = margin;
-    const drawPart = (pct, color) => {
-        if (pct <= 0) return;
-        const w = (pct / 100) * contentWidth;
-        doc.setFillColor(...color);
-        doc.rect(currentX, y, w, 6, 'F');
-        currentX += w;
-    };
-    drawPart(breakdown.human, COLORS.human);
-    drawPart(breakdown.mixed, COLORS.mixed);
-    drawPart(breakdown.ai, COLORS.ai);
-    y += 12;
-
-    const drawLegend = (label, value, color, x) => {
-        doc.setFillColor(...color);
-        doc.rect(x, y, 3, 3, 'F');
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(...COLORS.navy);
-        doc.text(`${value}%`, x + 5, y + 2.5);
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(...COLORS.ash);
-        doc.text(label, x + 14, y + 2.5);
-    };
-    drawLegend("Human", breakdown.human, COLORS.human, margin);
-    drawLegend("Mixed", breakdown.mixed, COLORS.mixed, margin + colWidth);
-    drawLegend("AI", breakdown.ai, COLORS.ai, margin + (colWidth * 2));
-    y += 20;
-
-    return y;
-}
-
-// ─── PAGE MANAGEMENT ────────────────────────────────────────
-function ensureSpace(doc, y, needed, pageHeight, margin, filename) {
-    if (y + needed > pageHeight - 20) {
-        doc.addPage();
-        // Mini header on continuation pages
-        doc.setFontSize(8);
-        doc.setTextColor(...COLORS.ash);
-        doc.text(`Jotril AI Report — ${filename}`, margin, 12);
-        doc.setDrawColor(...COLORS.silver);
-        doc.line(margin, 14, doc.internal.pageSize.getWidth() - margin, 14);
-        return 22;
-    }
-    return y;
-}
-
-// ─── RENDER HIGHLIGHTED WORDS (INLINE) ──────────────────────
-// Renders a piece of text word-by-word with highlight backgrounds.
-// charLabels is an array of labels per character.
-function renderHighlightedText(doc, text, charLabels, startState) {
-    let { x, y, margin, maxX, lineHeight, pageHeight, filename, fontStyle, fontSize } = startState;
-
-    doc.setFont("helvetica", fontStyle || "normal");
-    doc.setFontSize(fontSize || 10);
-    doc.setTextColor(...COLORS.navy);
-
-    const spaceW = doc.getTextWidth(" ");
-
-    // Split into words and render each
-    const words = text.split(/(\s+)/);
-    let charIdx = 0;
-
-    for (const segment of words) {
-        if (segment.length === 0) continue;
-
-        // Pure whitespace segment
-        if (/^\s+$/.test(segment)) {
-            // Count newlines
-            const newlines = (segment.match(/\n/g) || []).length;
-            if (newlines > 0) {
-                x = margin;
-                y += lineHeight * newlines;
-                y = ensureSpace(doc, y, lineHeight, pageHeight, margin, filename);
-            } else {
-                x += spaceW;
-            }
-            charIdx += segment.length;
-            continue;
-        }
-
-        const wordWidth = doc.getTextWidth(segment);
-
-        // Wrap to next line if needed
-        if (x + wordWidth > maxX && x > margin) {
-            x = margin;
-            y += lineHeight;
-            y = ensureSpace(doc, y, lineHeight, pageHeight, margin, filename);
-        }
-
-        // Determine the dominant label for this word
-        const wordLabels = charLabels.slice(charIdx, charIdx + segment.length);
-        const labelCounts = {};
-        for (const l of wordLabels) {
-            labelCounts[l] = (labelCounts[l] || 0) + 1;
-        }
-        let dominantLabel = 'human';
-        let maxCount = 0;
-        for (const [lbl, cnt] of Object.entries(labelCounts)) {
-            if (cnt > maxCount) { maxCount = cnt; dominantLabel = lbl; }
-        }
-
-        // Draw highlight background
-        const labelColor = getLabelColor(dominantLabel);
-        if (labelColor) {
-            const alpha = dominantLabel === 'ai' ? 0.18 : 0.14;
-            const bg = blendHighlight(labelColor, alpha);
-            doc.setFillColor(...bg);
-            doc.rect(x, y - 3.5, wordWidth + 0.5, lineHeight - 0.5, 'F');
-        }
-
-        doc.setFont("helvetica", fontStyle || "normal");
-        doc.setFontSize(fontSize || 10);
-        doc.setTextColor(...COLORS.navy);
-        doc.text(segment, x, y);
-        x += wordWidth + spaceW;
-        charIdx += segment.length;
-    }
-
-    return { x, y };
-}
-
-// ─── HTML DOM WALKER ────────────────────────────────────────
-function renderHtmlBody(doc, sourceHtml, chunks, startY, margin, pageWidth, pageHeight, filename) {
-    const parser = new DOMParser();
-    const htmlDoc = parser.parseFromString(sourceHtml, 'text/html');
-
-    const contentWidth = pageWidth - (margin * 2);
-    const maxX = pageWidth - margin;
-
-    // Build full analysis text and chunk map
+// ─── DOM HIGHLIGHT INJECTOR ─────────────────────────────────
+// Walks a live DOM tree and replaces text nodes with highlighted <mark> spans
+function applyHighlightsToDOM(container, chunks) {
     const fullText = chunks.map(c => c.text).join('');
     const chunkMap = buildChunkMap(chunks);
-
-    // Extract full text from HTML for fuzzy matching
-    const htmlText = htmlDoc.body.textContent || '';
+    const htmlText = container.textContent || '';
     const charLabels = matchTextToChunkMap(htmlText, fullText, chunkMap);
 
-    let y = startY;
     let globalCharIdx = 0;
-    const lineHeight = 7;
 
-    let currentX = margin; // Track x across sibling text nodes
-
-    function walkNode(node, fontStyle = "normal", fontSize = 10, indent = 0) {
+    function walk(node) {
         if (node.nodeType === 3) { // Text node
             const text = node.textContent;
             if (!text || text.trim() === '') {
@@ -345,368 +95,56 @@ function renderHtmlBody(doc, sourceHtml, chunks, startY, margin, pageWidth, page
             }
 
             const labels = charLabels.slice(globalCharIdx, globalCharIdx + text.length);
-            const xStart = Math.max(margin + indent, currentX);
 
-            const result = renderHighlightedText(doc, text, labels, {
-                x: xStart, y, margin: margin + indent, maxX, lineHeight, pageHeight, filename, fontStyle, fontSize
-            });
-            y = result.y;
-            currentX = result.x;
+            const spans = [];
+            let currentLabel = labels[0];
+            let currentText = text[0];
 
+            for (let i = 1; i < text.length; i++) {
+                if (labels[i] === currentLabel) {
+                    currentText += text[i];
+                } else {
+                    spans.push({ text: currentText, label: currentLabel });
+                    currentLabel = labels[i];
+                    currentText = text[i];
+                }
+            }
+            if (currentText) spans.push({ text: currentText, label: currentLabel });
+
+            const fragment = document.createDocumentFragment();
+            for (const span of spans) {
+                if (span.label === 'ai' || span.label === 'mixed') {
+                    const mark = document.createElement('mark');
+                    mark.textContent = span.text;
+                    // Transparent highlights with visible color
+                    mark.style.backgroundColor = span.label === 'ai'
+                        ? 'rgba(239, 68, 68, 0.25)'
+                        : 'rgba(245, 158, 11, 0.25)';
+                    mark.style.color = 'inherit';
+                    fragment.appendChild(mark);
+                } else {
+                    fragment.appendChild(document.createTextNode(span.text));
+                }
+            }
+
+            node.replaceWith(fragment);
             globalCharIdx += text.length;
             return;
         }
 
-        if (node.nodeType !== 1) return; // Only process element nodes
+        if (node.nodeType === 1) {
+            // Only walk elements we care about, skip scripts/styles
+            if (['SCRIPT', 'STYLE', 'BUTTON'].includes(node.tagName)) return;
 
-        const tag = node.tagName?.toLowerCase();
-
-        // ─── Headings ───
-        if (/^h[1-6]$/.test(tag)) {
-            const level = parseInt(tag[1]);
-            const hSize = Math.max(10, 20 - (level * 2)); // h1=18, h2=16, h3=14...
-            y += 6;
-            y = ensureSpace(doc, y, hSize + 6, pageHeight, margin, filename);
-
-            for (const child of node.childNodes) {
-                walkNode(child, "bold", hSize, indent);
+            // Mammoth sometimes creates empty spans, copy array so iteration doesn't break
+            const children = Array.from(node.childNodes);
+            for (const child of children) {
+                walk(child);
             }
-            y += 8;
-            return;
-        }
-
-        // ─── Paragraphs ───
-        if (tag === 'p') {
-            y = ensureSpace(doc, y, lineHeight + 4, pageHeight, margin, filename);
-            currentX = margin + indent; // Reset x for new paragraph
-            for (const child of node.childNodes) {
-                walkNode(child, fontStyle, fontSize, indent);
-            }
-            y += 6;
-            currentX = margin + indent;
-            return;
-        }
-
-        // ─── Unordered List ───
-        if (tag === 'ul') {
-            y += 4;
-            for (const child of node.childNodes) {
-                walkNode(child, fontStyle, fontSize, indent);
-            }
-            y += 4;
-            return;
-        }
-
-        // ─── Ordered List ───
-        if (tag === 'ol') {
-            y += 4;
-            let counter = 1;
-            for (const child of node.childNodes) {
-                if (child.tagName?.toLowerCase() === 'li') {
-                    child._olIndex = counter++;
-                }
-                walkNode(child, fontStyle, fontSize, indent);
-            }
-            y += 4;
-            return;
-        }
-
-        // ─── List Items ───
-        if (tag === 'li') {
-            y = ensureSpace(doc, y, lineHeight + 4, pageHeight, margin, filename);
-            const bulletIndent = indent + 8;
-
-            doc.setFont("helvetica", "normal");
-            doc.setFontSize(fontSize);
-            doc.setTextColor(...COLORS.navy);
-
-            if (node._olIndex) {
-                doc.text(`${node._olIndex}.`, margin + indent, y);
-            } else {
-                doc.text("•", margin + indent + 1, y);
-            }
-
-            currentX = margin + bulletIndent;
-            for (const child of node.childNodes) {
-                walkNode(child, fontStyle, fontSize, bulletIndent);
-            }
-            y += 5;
-            currentX = margin + indent;
-            return;
-        }
-
-        // ─── Tables ───
-        if (tag === 'table') {
-            y = ensureSpace(doc, y, 20, pageHeight, margin, filename);
-            const tableData = [];
-            const rows = node.querySelectorAll('tr');
-
-            for (const row of rows) {
-                const cells = row.querySelectorAll('td, th');
-                const rowData = [];
-                for (const cell of cells) {
-                    const cellText = cell.textContent.trim();
-                    // Find label for this cell's text
-                    const cellLabels = charLabels.slice(globalCharIdx, globalCharIdx + cellText.length);
-                    // Count dominant label
-                    const counts = {};
-                    for (const l of cellLabels) counts[l] = (counts[l] || 0) + 1;
-                    let dominant = 'human';
-                    let max = 0;
-                    for (const [lbl, c] of Object.entries(counts)) {
-                        if (c > max) { max = c; dominant = lbl; }
-                    }
-                    rowData.push({ content: cellText, label: dominant });
-                    globalCharIdx += cell.textContent.length;
-                }
-                tableData.push(rowData);
-            }
-
-            if (tableData.length > 0) {
-                const isHeader = rows[0]?.querySelector('th') !== null;
-                const head = isHeader ? [tableData[0].map(c => c.content)] : [];
-                const body = (isHeader ? tableData.slice(1) : tableData).map(r => r.map(c => c.content));
-
-                // Build cell styles for highlighting
-                const bodyCellStyles = {};
-                const bodyRows = isHeader ? tableData.slice(1) : tableData;
-                bodyRows.forEach((row, ri) => {
-                    row.forEach((cell, ci) => {
-                        const color = getLabelColor(cell.label);
-                        if (color) {
-                            const alpha = cell.label === 'ai' ? 0.15 : 0.12;
-                            const bg = blendHighlight(color, alpha);
-                            if (!bodyCellStyles[ri]) bodyCellStyles[ri] = {};
-                            bodyCellStyles[ri][ci] = { fillColor: bg };
-                        }
-                    });
-                });
-
-                autoTable(doc, {
-                    head: head,
-                    body: body,
-                    startY: y,
-                    margin: { left: margin, right: margin },
-                    styles: {
-                        font: 'helvetica',
-                        fontSize: 9,
-                        textColor: COLORS.navy,
-                        lineColor: COLORS.silver,
-                        lineWidth: 0.3,
-                    },
-                    headStyles: {
-                        fillColor: COLORS.navy,
-                        textColor: COLORS.white,
-                        fontStyle: 'bold',
-                    },
-                    bodyStyles: {
-                        fillColor: COLORS.white,
-                    },
-                    columnStyles: {},
-                    didParseCell: function (data) {
-                        if (data.section === 'body') {
-                            const style = bodyCellStyles[data.row.index]?.[data.column.index];
-                            if (style) {
-                                data.cell.styles.fillColor = style.fillColor;
-                            }
-                        }
-                    },
-                });
-
-                y = doc.lastAutoTable.finalY + 8;
-            }
-            return;
-        }
-
-        // ─── Bold / Italic / Underline ───
-        if (tag === 'strong' || tag === 'b') {
-            for (const child of node.childNodes) {
-                walkNode(child, "bold", fontSize, indent);
-            }
-            return;
-        }
-        if (tag === 'em' || tag === 'i') {
-            for (const child of node.childNodes) {
-                walkNode(child, "italic", fontSize, indent);
-            }
-            return;
-        }
-        if (tag === 'u') {
-            // jsPDF doesn't support underline natively, render children in bolditalic as visual cue
-            for (const child of node.childNodes) {
-                walkNode(child, "bolditalic", fontSize, indent);
-            }
-            return;
-        }
-
-        // ─── Subscript / Superscript ───
-        if (tag === 'sub' || tag === 'sup') {
-            for (const child of node.childNodes) {
-                walkNode(child, fontStyle, Math.max(7, fontSize - 2), indent);
-            }
-            return;
-        }
-
-        // ─── Blockquote ───
-        if (tag === 'blockquote') {
-            y += 4;
-            y = ensureSpace(doc, y, lineHeight + 6, pageHeight, margin, filename);
-            const quoteIndent = indent + 12;
-            // Draw subtle left bar
-            doc.setDrawColor(180, 190, 210);
-            doc.setLineWidth(1.5);
-            doc.line(margin + indent + 4, y - 3, margin + indent + 4, y + lineHeight + 2);
-            for (const child of node.childNodes) {
-                walkNode(child, "italic", fontSize, quoteIndent);
-            }
-            y += 4;
-            return;
-        }
-
-        // ─── Links (render as normal text) ───
-        if (tag === 'a') {
-            for (const child of node.childNodes) {
-                walkNode(child, fontStyle, fontSize, indent);
-            }
-            return;
-        }
-
-        // ─── Span (mammoth wraps many formats in spans) ───
-        if (tag === 'span') {
-            for (const child of node.childNodes) {
-                walkNode(child, fontStyle, fontSize, indent);
-            }
-            return;
-        }
-
-        // ─── Div / Section / Article (block-level containers) ───
-        if (tag === 'div' || tag === 'section' || tag === 'article') {
-            for (const child of node.childNodes) {
-                walkNode(child, fontStyle, fontSize, indent);
-            }
-            return;
-        }
-
-        // ─── Line break ───
-        if (tag === 'br') {
-            y += lineHeight;
-            currentX = margin + indent;
-            y = ensureSpace(doc, y, lineHeight, pageHeight, margin, filename);
-            return;
-        }
-
-        // ─── Default: recurse into children ───
-        for (const child of node.childNodes) {
-            walkNode(child, fontStyle, fontSize, indent);
         }
     }
 
-    // Walk all body children
-    for (const child of htmlDoc.body.childNodes) {
-        walkNode(child);
-    }
-
-    return y;
-}
-
-// ─── PLAIN TEXT FALLBACK RENDERER ───────────────────────────
-function renderPlainTextBody(doc, chunks, startY, margin, pageWidth, pageHeight, filename) {
-    const lineHeight = 7;
-    const maxX = pageWidth - margin;
-    let y = startY;
-    let currentLineX = margin;
-
-    for (const chunk of chunks) {
-        const text = chunk.text.trim();
-        if (!text) continue;
-
-        const lines = text.split('\n');
-
-        for (let li = 0; li < lines.length; li++) {
-            const line = lines[li];
-
-            // Detect structural patterns in plain text
-            const isBullet = /^[\-•\*]\s/.test(line);
-            const isNumbered = /^\d+\.\s/.test(line);
-            const isHeading = (line === line.toUpperCase() && line.length < 80 && line.length > 2) || /^#{1,3}\s/.test(line);
-            const isEmpty = line.trim() === '';
-
-            if (isEmpty) {
-                y += 4;
-                currentLineX = margin;
-                continue;
-            }
-
-            y = ensureSpace(doc, y, lineHeight + 2, pageHeight, margin, filename);
-
-            let indent = 0;
-            let prefix = '';
-
-            if (isBullet) {
-                indent = 6;
-                prefix = '•  ';
-                doc.setFont("helvetica", "normal");
-                doc.setFontSize(10);
-                doc.setTextColor(...COLORS.navy);
-                doc.text(prefix, margin, y);
-            } else if (isNumbered) {
-                indent = 8;
-                const numMatch = line.match(/^(\d+\.)\s/);
-                prefix = numMatch ? numMatch[1] + ' ' : '';
-                doc.setFont("helvetica", "normal");
-                doc.setFontSize(10);
-                doc.setTextColor(...COLORS.navy);
-                doc.text(prefix, margin, y);
-            }
-
-            const cleanLine = isBullet ? line.replace(/^[\-•\*]\s/, '') :
-                isNumbered ? line.replace(/^\d+\.\s/, '') :
-                    isHeading ? line.replace(/^#{1,3}\s/, '') : line;
-
-            const fontStyle = isHeading ? "bold" : "normal";
-            const fontSize = isHeading ? 13 : 10;
-
-            doc.setFont("helvetica", fontStyle);
-            doc.setFontSize(fontSize);
-            doc.setTextColor(...COLORS.navy);
-
-            currentLineX = margin + indent;
-
-            const words = cleanLine.split(/\s+/);
-            for (const word of words) {
-                if (!word) continue;
-                const wordWidth = doc.getTextWidth(word + " ");
-
-                if (currentLineX + wordWidth > maxX && currentLineX > margin + indent) {
-                    currentLineX = margin + indent;
-                    y += lineHeight;
-                    y = ensureSpace(doc, y, lineHeight, pageHeight, margin, filename);
-                }
-
-                // Highlight
-                const labelColor = getLabelColor(chunk.label);
-                if (labelColor) {
-                    const alpha = chunk.label === 'ai' ? 0.18 : 0.14;
-                    const bg = blendHighlight(labelColor, alpha);
-                    doc.setFillColor(...bg);
-                    doc.rect(currentLineX, y - 3.5, wordWidth, lineHeight - 0.5, 'F');
-                }
-
-                doc.setFont("helvetica", fontStyle);
-                doc.setFontSize(fontSize);
-                doc.setTextColor(...COLORS.navy);
-                doc.text(word, currentLineX, y);
-                currentLineX += wordWidth;
-            }
-
-            y += lineHeight;
-            currentLineX = margin;
-
-            if (isHeading) y += 3;
-        }
-    }
-
-    return y;
+    walk(container);
 }
 
 // ─── MAIN EXPORT ────────────────────────────────────────────
@@ -722,43 +160,160 @@ export async function generatePDFReport(data) {
         date = new Date().toLocaleDateString()
     } = data;
 
-    const doc = new jsPDF({
-        orientation: 'p',
-        unit: 'mm',
-        format: 'a4',
-        putOnlyUsedFonts: true
-    });
+    // 1. Create a hidden container attached to body so it gets styles
+    const wrapper = document.createElement('div');
+    // Position off-screen but keep it visible to html2canvas
+    wrapper.style.position = 'absolute';
+    wrapper.style.left = '-9999px';
+    wrapper.style.top = '0';
+    wrapper.style.width = '800px';
+    wrapper.style.backgroundColor = 'white';
+    wrapper.style.color = '#0F172A';
+    wrapper.style.fontFamily = 'system-ui, -apple-system, sans-serif';
 
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 20;
+    // We use inline styles for the header so it renders perfectly without relying on external classes
+    const getBarWidth = (pct) => Math.max(0, pct || 0) + '%';
+    const assessColor = breakdown.ai >= 60 ? '#EF4444' : (breakdown.ai >= 30 || breakdown.mixed >= 40 ? '#F59E0B' : '#10B981');
+    const fname = filename.length > 35 ? filename.substring(0, 32) + '...' : filename;
 
-    // ── Render branded header & summary ──
-    let y = renderReportHeader(doc, { filename, breakdown, overallLabel, sentenceCount, wordCount, date }, margin, pageWidth);
+    wrapper.innerHTML = `
+        <style>
+            /* Document Styles Mapped from Mammoth */
+            #pdf-body-content p { margin-top: 0.8em; margin-bottom: 0.8em; }
+            #pdf-body-content h1.docx-title { font-size: 32px; text-align: center; font-weight: bold; margin-bottom: 30px; }
+            #pdf-body-content p.docx-subtitle { font-size: 20px; text-align: center; color: #475569; margin-bottom: 30px; }
+            #pdf-body-content .align-center { text-align: center !important; }
+            #pdf-body-content .align-right { text-align: right !important; }
+            #pdf-body-content .align-justify { text-align: justify !important; }
+            #pdf-body-content .align-left { text-align: left !important; }
+            
+            /* General Elements */
+            #pdf-body-content img { max-width: 100%; height: auto; border-radius: 4px; margin: 15px 0; display: block; page-break-inside: avoid; }
+            #pdf-body-content ul, #pdf-body-content ol { padding-left: 2rem; margin: 1em 0; }
+            #pdf-body-content li { margin-bottom: 0.5em; }
+            
+            /* Table Styling */
+            #pdf-body-content table { border-collapse: collapse; width: 100%; margin: 20px 0; page-break-inside: avoid; font-size: 13px; }
+            #pdf-body-content th, #pdf-body-content td { border: 1px solid #CBD5E1; padding: 10px 14px; text-align: left; }
+            #pdf-body-content th { background-color: #F1F5F9; font-weight: bold; color: #0F172A; }
+            #pdf-body-content tr:nth-child(even) td { background-color: #F8FAFC; }
+        </style>
+        <div style="padding: 40px; box-sizing: border-box;">
+            <!-- Header -->
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 20px;">
+                <div>
+                    <h1 style="margin: 0; font-size: 32px; font-weight: 800; color: #0F172A;">Jotril<span style="color: #10B981;">AI</span></h1>
+                    <p style="margin: 4px 0 0; font-size: 14px; color: #64748B;">Premium PDF Report</p>
+                </div>
+                <div style="text-align: right; color: #64748B; font-size: 14px;">
+                    <p style="margin: 0;">Date: ${date}</p>
+                </div>
+            </div>
+            
+            <hr style="border: 0; height: 1px; background: #E2E8F0; margin-bottom: 30px;" />
+            
+            <!-- Assessment Banner -->
+            <div style="background-color: ${assessColor}; color: white; padding: 16px; border-radius: 8px; text-align: center; margin-bottom: 30px;">
+                <p style="margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;">Document Assessment</p>
+                <h2 style="margin: 4px 0 0; font-size: 24px; font-weight: 800; text-transform: uppercase;">${overallLabel}</h2>
+            </div>
+            
+            <!-- Stats -->
+            <div style="display: flex; justify-content: space-between; margin-bottom: 30px;">
+                <div style="flex: 1;">
+                    <h3 style="margin: 0; font-size: 28px; font-weight: 800; color: #0F172A;">${sentenceCount}</h3>
+                    <p style="margin: 2px 0 0; font-size: 12px; color: #64748B; font-weight: bold; text-transform: uppercase;">Sentences</p>
+                </div>
+                <div style="flex: 1;">
+                    <h3 style="margin: 0; font-size: 28px; font-weight: 800; color: #0F172A;">${wordCount}</h3>
+                    <p style="margin: 2px 0 0; font-size: 12px; color: #64748B; font-weight: bold; text-transform: uppercase;">Words</p>
+                </div>
+                <div style="flex: 1.5; text-align: right;">
+                    <h3 style="margin: 0; font-size: 20px; font-weight: 800; color: #0F172A; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${fname}</h3>
+                    <p style="margin: 2px 0 0; font-size: 12px; color: #64748B; font-weight: bold; text-transform: uppercase;">File</p>
+                </div>
+            </div>
+            
+            <!-- Composition Bar -->
+            <div style="margin-bottom: 50px;">
+                <p style="margin: 0 0 8px; font-size: 12px; font-weight: bold; color: #64748B; text-transform: uppercase;">Composition Breakdown</p>
+                <div style="display: flex; height: 12px; border-radius: 6px; overflow: hidden; margin-bottom: 12px;">
+                    <div style="width: ${getBarWidth(breakdown.human)}; background-color: #10B981;"></div>
+                    <div style="width: ${getBarWidth(breakdown.mixed)}; background-color: #F59E0B;"></div>
+                    <div style="width: ${getBarWidth(breakdown.ai)}; background-color: #EF4444;"></div>
+                </div>
+                <div style="display: flex; gap: 30px; font-size: 13px; color: #64748B;">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="width: 10px; height: 10px; border-radius: 2px; background: #10B981;"></span>
+                        <span style="font-weight: bold; color: #0F172A;">${breakdown.human}%</span> Human
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="width: 10px; height: 10px; border-radius: 2px; background: #F59E0B;"></span>
+                        <span style="font-weight: bold; color: #0F172A;">${breakdown.mixed}%</span> Mixed
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="width: 10px; height: 10px; border-radius: 2px; background: #EF4444;"></span>
+                        <span style="font-weight: bold; color: #0F172A;">${breakdown.ai}%</span> AI
+                    </div>
+                </div>
+            </div>
 
-    // ── Section title ──
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.setTextColor(...COLORS.navy);
-    doc.text(sourceHtml ? "Formatted Document Analysis" : "Sentence-Level Heatmap", margin, y);
-    y += 10;
+            <!-- Content Title -->
+            <h2 style="font-size: 18px; font-weight: bold; color: #0F172A; margin-bottom: 20px;">
+                ${sourceHtml ? 'Formatted Document Analysis' : 'Sentence-Level Heatmap'}
+            </h2>
+            
+            <!-- Document Body -->
+            <div id="pdf-body-content" style="line-height: 1.8; font-size: 14px; text-align: justify;">
+                <!-- Content injected via JS below -->
+            </div>
+        </div>
+    `;
 
-    // ── Render body ──
+    document.body.appendChild(wrapper);
+
+    // Inject content dynamically
+    const bodyContent = wrapper.querySelector('#pdf-body-content');
+
     if (sourceHtml) {
-        y = renderHtmlBody(doc, sourceHtml, chunks, y, margin, pageWidth, pageHeight, filename);
+        bodyContent.innerHTML = sourceHtml;
+        // Apply highlights accurately over the DOM
+        applyHighlightsToDOM(bodyContent, chunks);
     } else {
-        y = renderPlainTextBody(doc, chunks, y, margin, pageWidth, pageHeight, filename);
+        // Plain text rendering: loop chunks and wrap in spans manually
+        chunks.forEach(chunk => {
+            const span = document.createElement('span');
+            span.textContent = chunk.text + ' ';
+
+            if (chunk.label === 'ai') {
+                span.style.backgroundColor = 'rgba(239, 68, 68, 0.25)';
+            } else if (chunk.label === 'mixed') {
+                span.style.backgroundColor = 'rgba(245, 158, 11, 0.25)';
+            }
+
+            bodyContent.appendChild(span);
+        });
+        bodyContent.style.whiteSpace = 'pre-wrap';
     }
 
-    // ── Footer on all pages ──
-    const totalPages = doc.internal.getNumberOfPages();
-    for (let i = 1; i <= totalPages; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(...COLORS.ash);
-        doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
-        doc.text("Verification powered by Jotril V2 Engine", margin, pageHeight - 10);
-    }
+    // Capture with html2pdf
+    const pdfOptions = {
+        margin: 0,
+        filename: `Jotril_Report_${filename.replace(/\.[^/.]+$/, "")}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: {
+            scale: 2,
+            useCORS: true,
+            letterRendering: true,
+            scrollY: 0
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
 
-    doc.save(`Jotril_Report_${filename.replace(/\.[^/.]+$/, "")}.pdf`);
+    try {
+        await html2pdf().set(pdfOptions).from(wrapper).save();
+    } finally {
+        // Always clean up the DOM!
+        document.body.removeChild(wrapper);
+    }
 }
