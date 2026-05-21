@@ -1,27 +1,34 @@
-import html2pdf from 'html2pdf.js';
+import pdfMake from "pdfmake/build/pdfmake";
+import pdfFonts from "pdfmake/build/vfs_fonts";
+import htmlToPdfmake from "html-to-pdfmake";
+
+// Initialize fonts
+pdfMake.vfs = pdfFonts.pdfMake.vfs;
 
 /**
- * Premium PDF Report Generator for Jotril AI — V2 Formatting Engine
+ * Premium Vector-PDF Report Generator for Jotril AI — V3 Engine
  * 
- * Uses html2pdf.js + html2canvas to perfectly preserve DOM formatting, 
- * tables, charts, pictures, and styles from the source document, while
- * overlaying the AI heatmap dynamically.
+ * Uses pdfmake + html-to-pdfmake for 100% crisp VECTOR graphics,
+ * selectable text, native pagination (no slicing text in half),
+ * and perfect retention of tables, bolding, colors, and lists.
  */
 
+const COLORS = {
+    ai: 'rgba(239, 68, 68, 0.25)',     // Vivid red
+    mixed: 'rgba(245, 158, 11, 0.25)'  // Vibrant amber
+};
+
 // ─── CHUNK-TO-CHARACTER MAP ─────────────────────────────────
-// Maps every character position in the full text to a chunk label.
 function buildChunkMap(chunks) {
     const map = [];
     for (const chunk of chunks) {
-        const text = chunk.text;
-        for (let i = 0; i < text.length; i++) {
+        for (let i = 0; i < chunk.text.length; i++) {
             map.push(chunk.label);
         }
     }
     return map;
 }
 
-// Fuzzy-forward match: walks through targetText and chunkMap simultaneously
 function matchTextToChunkMap(targetText, fullAnalysisText, chunkMap) {
     const result = [];
     let aPtr = 0;
@@ -77,8 +84,8 @@ function matchTextToChunkMap(targetText, fullAnalysisText, chunkMap) {
 }
 
 // ─── DOM HIGHLIGHT INJECTOR ─────────────────────────────────
-// Walks a live DOM tree and replaces text nodes with highlighted <mark> spans
-function applyHighlightsToDOM(container, chunks) {
+function injectHighlightsIntoDOM(container, chunks) {
+    if (!chunks || chunks.length === 0) return;
     const fullText = chunks.map(c => c.text).join('');
     const chunkMap = buildChunkMap(chunks);
     const htmlText = container.textContent || '';
@@ -95,7 +102,6 @@ function applyHighlightsToDOM(container, chunks) {
             }
 
             const labels = charLabels.slice(globalCharIdx, globalCharIdx + text.length);
-
             const spans = [];
             let currentLabel = labels[0];
             let currentText = text[0];
@@ -114,41 +120,39 @@ function applyHighlightsToDOM(container, chunks) {
             const fragment = document.createDocumentFragment();
             for (const span of spans) {
                 if (span.label === 'ai' || span.label === 'mixed') {
-                    const mark = document.createElement('mark');
+                    // Span styling mapped specifically for pdfmake
+                    const mark = document.createElement('span');
                     mark.textContent = span.text;
-                    // Transparent highlights with visible color
-                    mark.style.backgroundColor = span.label === 'ai'
-                        ? 'rgba(239, 68, 68, 0.25)'
-                        : 'rgba(245, 158, 11, 0.25)';
-                    mark.style.color = 'inherit';
+                    mark.style.backgroundColor = span.label === 'ai' ? '#EF4444' : '#F59E0B'; // rgb colors are more reliable in pdfmake core
+                    mark.style.color = '#FFFFFF'; // force white text over solid background since transparency acts weird sometimes in pdfMake rendering text underneath
                     fragment.appendChild(mark);
                 } else {
                     fragment.appendChild(document.createTextNode(span.text));
                 }
             }
-
             node.replaceWith(fragment);
             globalCharIdx += text.length;
             return;
         }
 
         if (node.nodeType === 1) {
-            // Only walk elements we care about, skip scripts/styles
-            if (['SCRIPT', 'STYLE', 'BUTTON'].includes(node.tagName)) return;
+            // Re-style block-level elements for better pdfMake AST parsing
+            if (node.tagName === 'P') node.style.marginBottom = '10px';
+            if (node.classList.contains('align-center')) node.style.textAlign = 'center';
+            if (node.classList.contains('align-right')) node.style.textAlign = 'right';
+            if (node.classList.contains('align-justify')) node.style.textAlign = 'justify';
 
-            // Mammoth sometimes creates empty spans, copy array so iteration doesn't break
             const children = Array.from(node.childNodes);
             for (const child of children) {
                 walk(child);
             }
         }
     }
-
     walk(container);
 }
 
 // ─── MAIN EXPORT ────────────────────────────────────────────
-export async function generatePDFReport(data) {
+export function generatePDFReport(data) {
     const {
         filename,
         breakdown,
@@ -160,160 +164,148 @@ export async function generatePDFReport(data) {
         date = new Date().toLocaleDateString()
     } = data;
 
-    // 1. Create a hidden container attached to body so it gets styles
+    // 1. Convert our content to an injected DOM to get perfectly highlighted HTML
     const wrapper = document.createElement('div');
-    // Position off-screen but keep it visible to html2canvas
-    wrapper.style.position = 'absolute';
-    wrapper.style.left = '-9999px';
-    wrapper.style.top = '0';
-    wrapper.style.width = '800px';
-    wrapper.style.backgroundColor = 'white';
-    wrapper.style.color = '#0F172A';
-    wrapper.style.fontFamily = 'system-ui, -apple-system, sans-serif';
-
-    // We use inline styles for the header so it renders perfectly without relying on external classes
-    const getBarWidth = (pct) => Math.max(0, pct || 0) + '%';
-    const assessColor = breakdown.ai >= 60 ? '#EF4444' : (breakdown.ai >= 30 || breakdown.mixed >= 40 ? '#F59E0B' : '#10B981');
-    const fname = filename.length > 35 ? filename.substring(0, 32) + '...' : filename;
-
-    wrapper.innerHTML = `
-        <style>
-            /* Document Styles Mapped from Mammoth */
-            #pdf-body-content p { margin-top: 0.8em; margin-bottom: 0.8em; }
-            #pdf-body-content h1.docx-title { font-size: 32px; text-align: center; font-weight: bold; margin-bottom: 30px; }
-            #pdf-body-content p.docx-subtitle { font-size: 20px; text-align: center; color: #475569; margin-bottom: 30px; }
-            #pdf-body-content .align-center { text-align: center !important; }
-            #pdf-body-content .align-right { text-align: right !important; }
-            #pdf-body-content .align-justify { text-align: justify !important; }
-            #pdf-body-content .align-left { text-align: left !important; }
-            
-            /* General Elements */
-            #pdf-body-content img { max-width: 100%; height: auto; border-radius: 4px; margin: 15px 0; display: block; page-break-inside: avoid; }
-            #pdf-body-content ul, #pdf-body-content ol { padding-left: 2rem; margin: 1em 0; }
-            #pdf-body-content li { margin-bottom: 0.5em; }
-            
-            /* Table Styling */
-            #pdf-body-content table { border-collapse: collapse; width: 100%; margin: 20px 0; page-break-inside: avoid; font-size: 13px; }
-            #pdf-body-content th, #pdf-body-content td { border: 1px solid #CBD5E1; padding: 10px 14px; text-align: left; }
-            #pdf-body-content th { background-color: #F1F5F9; font-weight: bold; color: #0F172A; }
-            #pdf-body-content tr:nth-child(even) td { background-color: #F8FAFC; }
-        </style>
-        <div style="padding: 40px; box-sizing: border-box;">
-            <!-- Header -->
-            <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 20px;">
-                <div>
-                    <h1 style="margin: 0; font-size: 32px; font-weight: 800; color: #0F172A;">Jotril<span style="color: #10B981;">AI</span></h1>
-                    <p style="margin: 4px 0 0; font-size: 14px; color: #64748B;">Premium PDF Report</p>
-                </div>
-                <div style="text-align: right; color: #64748B; font-size: 14px;">
-                    <p style="margin: 0;">Date: ${date}</p>
-                </div>
-            </div>
-            
-            <hr style="border: 0; height: 1px; background: #E2E8F0; margin-bottom: 30px;" />
-            
-            <!-- Assessment Banner -->
-            <div style="background-color: ${assessColor}; color: white; padding: 16px; border-radius: 8px; text-align: center; margin-bottom: 30px;">
-                <p style="margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;">Document Assessment</p>
-                <h2 style="margin: 4px 0 0; font-size: 24px; font-weight: 800; text-transform: uppercase;">${overallLabel}</h2>
-            </div>
-            
-            <!-- Stats -->
-            <div style="display: flex; justify-content: space-between; margin-bottom: 30px;">
-                <div style="flex: 1;">
-                    <h3 style="margin: 0; font-size: 28px; font-weight: 800; color: #0F172A;">${sentenceCount}</h3>
-                    <p style="margin: 2px 0 0; font-size: 12px; color: #64748B; font-weight: bold; text-transform: uppercase;">Sentences</p>
-                </div>
-                <div style="flex: 1;">
-                    <h3 style="margin: 0; font-size: 28px; font-weight: 800; color: #0F172A;">${wordCount}</h3>
-                    <p style="margin: 2px 0 0; font-size: 12px; color: #64748B; font-weight: bold; text-transform: uppercase;">Words</p>
-                </div>
-                <div style="flex: 1.5; text-align: right;">
-                    <h3 style="margin: 0; font-size: 20px; font-weight: 800; color: #0F172A; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${fname}</h3>
-                    <p style="margin: 2px 0 0; font-size: 12px; color: #64748B; font-weight: bold; text-transform: uppercase;">File</p>
-                </div>
-            </div>
-            
-            <!-- Composition Bar -->
-            <div style="margin-bottom: 50px;">
-                <p style="margin: 0 0 8px; font-size: 12px; font-weight: bold; color: #64748B; text-transform: uppercase;">Composition Breakdown</p>
-                <div style="display: flex; height: 12px; border-radius: 6px; overflow: hidden; margin-bottom: 12px;">
-                    <div style="width: ${getBarWidth(breakdown.human)}; background-color: #10B981;"></div>
-                    <div style="width: ${getBarWidth(breakdown.mixed)}; background-color: #F59E0B;"></div>
-                    <div style="width: ${getBarWidth(breakdown.ai)}; background-color: #EF4444;"></div>
-                </div>
-                <div style="display: flex; gap: 30px; font-size: 13px; color: #64748B;">
-                    <div style="display: flex; align-items: center; gap: 6px;">
-                        <span style="width: 10px; height: 10px; border-radius: 2px; background: #10B981;"></span>
-                        <span style="font-weight: bold; color: #0F172A;">${breakdown.human}%</span> Human
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 6px;">
-                        <span style="width: 10px; height: 10px; border-radius: 2px; background: #F59E0B;"></span>
-                        <span style="font-weight: bold; color: #0F172A;">${breakdown.mixed}%</span> Mixed
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 6px;">
-                        <span style="width: 10px; height: 10px; border-radius: 2px; background: #EF4444;"></span>
-                        <span style="font-weight: bold; color: #0F172A;">${breakdown.ai}%</span> AI
-                    </div>
-                </div>
-            </div>
-
-            <!-- Content Title -->
-            <h2 style="font-size: 18px; font-weight: bold; color: #0F172A; margin-bottom: 20px;">
-                ${sourceHtml ? 'Formatted Document Analysis' : 'Sentence-Level Heatmap'}
-            </h2>
-            
-            <!-- Document Body -->
-            <div id="pdf-body-content" style="line-height: 1.8; font-size: 14px; text-align: justify;">
-                <!-- Content injected via JS below -->
-            </div>
-        </div>
-    `;
-
-    document.body.appendChild(wrapper);
-
-    // Inject content dynamically
-    const bodyContent = wrapper.querySelector('#pdf-body-content');
 
     if (sourceHtml) {
-        bodyContent.innerHTML = sourceHtml;
-        // Apply highlights accurately over the DOM
-        applyHighlightsToDOM(bodyContent, chunks);
+        wrapper.innerHTML = sourceHtml;
+        injectHighlightsIntoDOM(wrapper, chunks);
     } else {
-        // Plain text rendering: loop chunks and wrap in spans manually
+        // Plain text rendering: loop chunks and wrap in spans
         chunks.forEach(chunk => {
             const span = document.createElement('span');
             span.textContent = chunk.text + ' ';
-
             if (chunk.label === 'ai') {
-                span.style.backgroundColor = 'rgba(239, 68, 68, 0.25)';
+                span.style.backgroundColor = '#EF4444';
+                span.style.color = '#FFFFFF';
             } else if (chunk.label === 'mixed') {
-                span.style.backgroundColor = 'rgba(245, 158, 11, 0.25)';
+                span.style.backgroundColor = '#F59E0B';
+                span.style.color = '#FFFFFF';
             }
-
-            bodyContent.appendChild(span);
+            wrapper.appendChild(span);
         });
-        bodyContent.style.whiteSpace = 'pre-wrap';
     }
 
-    // Capture with html2pdf
-    const pdfOptions = {
-        margin: 0,
-        filename: `Jotril_Report_${filename.replace(/\.[^/.]+$/, "")}.pdf`,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: {
-            scale: 2,
-            useCORS: true,
-            letterRendering: true,
-            scrollY: 0
+    const annotatedHTML = wrapper.innerHTML;
+
+    // 2. Convert standard HTML directly to pdfMake definition
+    // pdfMake naturally supports <p>, <strong>, <em>, <table>, <tr>, <td>, <ul>, <img src="base64">
+    const htmlAst = htmlToPdfmake(annotatedHTML, {
+        tableAutoSize: true,
+        defaultStyles: {
+            p: { margin: [0, 0, 0, 10] },
+            h1: { fontSize: 24, bold: true, margin: [0, 10, 0, 5] },
+            h2: { fontSize: 18, bold: true, margin: [0, 10, 0, 5] },
+            h3: { fontSize: 14, bold: true, margin: [0, 10, 0, 5] },
+            table: { margin: [0, 5, 0, 15] },
+            img: { margin: [0, 10, 0, 10] }
+        }
+    });
+
+    // 3. Build the full Vector PDF payload structure
+    const assessColor = breakdown.ai >= 60 ? '#EF4444' : (breakdown.ai >= 30 || breakdown.mixed >= 40 ? '#F59E0B' : '#10B981');
+    const fname = filename.length > 40 ? filename.substring(0, 37) + '...' : filename;
+
+    const docDefinition = {
+        pageSize: 'A4',
+        pageMargins: [40, 60, 40, 60],
+
+        info: {
+            title: `Jotril Report - ${fname}`,
+            author: 'Jotril AI Engine',
+            subject: 'AI Detection Analysis Report',
         },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+
+        // Crisp Vector Header / Footer Native to PDF
+        header: {
+            margin: [40, 20, 40, 0],
+            columns: [
+                { text: [{ text: 'Jotril', bold: true, color: '#0F172A' }, { text: 'AI', bold: true, color: '#10B981' }], fontSize: 18 },
+                { text: `Report Date: ${date}`, alignment: 'right', fontSize: 10, color: '#64748B', margin: [0, 8, 0, 0] }
+            ]
+        },
+
+        footer: function (currentPage, pageCount) {
+            return {
+                margin: [40, 0, 40, 0],
+                columns: [
+                    { text: 'Powered by Jotril V3 Core Engine', fontSize: 8, color: '#94A3B8' },
+                    { text: `Page ${currentPage.toString()} of ${pageCount}`, alignment: 'right', fontSize: 8, color: '#94A3B8' }
+                ]
+            };
+        },
+
+        content: [
+            // Divider
+            { canvas: [{ type: 'line', x1: 0, y1: 10, x2: 515, y2: 10, lineWidth: 1, lineColor: '#E2E8F0' }], margin: [0, -10, 0, 20] },
+
+            // Document Assessment Banner
+            {
+                table: {
+                    widths: ['*'],
+                    body: [[{
+                        text: [
+                            { text: 'DOCUMENT ASSESSMENT\n', fontSize: 11, bold: true, margin: [0, 0, 0, 4], opacity: 0.9 },
+                            { text: overallLabel.toUpperCase(), fontSize: 20, bold: true }
+                        ],
+                        alignment: 'center',
+                        fillColor: assessColor,
+                        color: 'white',
+                        border: [false, false, false, false],
+                        margin: [0, 8, 0, 8]
+                    }]]
+                },
+                layout: 'noBorders',
+                margin: [0, 0, 0, 25]
+            },
+
+            // Stats row
+            {
+                columns: [
+                    { stack: [{ text: sentenceCount.toString(), fontSize: 26, bold: true, color: '#0F172A' }, { text: 'SENTENCES', fontSize: 10, color: '#64748B', bold: true }], width: '*' },
+                    { stack: [{ text: wordCount.toString(), fontSize: 26, bold: true, color: '#0F172A' }, { text: 'WORDS', fontSize: 10, color: '#64748B', bold: true }], width: '*' },
+                    { stack: [{ text: fname, fontSize: 16, bold: true, color: '#0F172A' }, { text: 'FILE', fontSize: 10, color: '#64748B', bold: true }], width: '1.5*' }
+                ],
+                margin: [0, 0, 0, 30]
+            },
+
+            // Composition Breakdown
+            { text: 'COMPOSITION BREAKDOWN', fontSize: 10, bold: true, color: '#64748B', margin: [0, 0, 0, 5] },
+            {
+                canvas: [
+                    { type: 'rect', x: 0, y: 0, w: 515 * (Math.max(0, breakdown.human) / 100), h: 10, color: '#10B981' },
+                    { type: 'rect', x: 515 * (Math.max(0, breakdown.human) / 100), y: 0, w: 515 * (Math.max(0, breakdown.mixed) / 100), h: 10, color: '#F59E0B' },
+                    { type: 'rect', x: 515 * ((Math.max(0, breakdown.human) + Math.max(0, breakdown.mixed)) / 100), y: 0, w: 515 * (Math.max(0, breakdown.ai) / 100), h: 10, color: '#EF4444' }
+                ],
+                margin: [0, 0, 0, 10]
+            },
+
+            // Legend
+            {
+                columns: [
+                    { canvas: [{ type: 'rect', x: 0, y: 2, w: 8, h: 8, color: '#10B981' }], width: 15 }, { text: [{ text: `${breakdown.human}% `, bold: true }, 'Human'], fontSize: 11, width: 'auto' },
+                    { width: 20, text: '' },
+                    { canvas: [{ type: 'rect', x: 0, y: 2, w: 8, h: 8, color: '#F59E0B' }], width: 15 }, { text: [{ text: `${breakdown.mixed}% `, bold: true }, 'Mixed'], fontSize: 11, width: 'auto' },
+                    { width: 20, text: '' },
+                    { canvas: [{ type: 'rect', x: 0, y: 2, w: 8, h: 8, color: '#EF4444' }], width: 15 }, { text: [{ text: `${breakdown.ai}% `, bold: true }, 'AI'], fontSize: 11, width: 'auto' }
+                ],
+                margin: [0, 0, 0, 30]
+            },
+
+            { text: sourceHtml ? 'Formatted Document Analysis' : 'Sentence-Level Heatmap', fontSize: 14, bold: true, color: '#0F172A', margin: [0, 0, 0, 15] },
+
+            // THIS is where the full HTML AST is elegantly injected. It behaves like native components.
+            ...htmlAst
+        ],
+
+        defaultStyle: {
+            font: 'Roboto',
+            fontSize: 11,
+            lineHeight: 1.6,
+            color: '#1E293B'
+        }
     };
 
-    try {
-        await html2pdf().set(pdfOptions).from(wrapper).save();
-    } finally {
-        // Always clean up the DOM!
-        document.body.removeChild(wrapper);
-    }
+    // 4. Trigger download directly mapping vector structures.
+    pdfMake.createPdf(docDefinition).download(`Jotril_Report_${filename.replace(/\.[^/.]+$/, "")}.pdf`);
 }
