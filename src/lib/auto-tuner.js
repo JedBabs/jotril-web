@@ -412,7 +412,26 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
                         withoutSentence.push({ scenario, idx });
                     }
                 });
-                return { withSentence, withoutSentence };
+                // Precompute delta pairs — structural matching that is identical across all trials
+                // Only the scores change between configs, not which windows overlap
+                const deltaPairs = [];
+                for (const w1 of withSentence) {
+                    const w1IndicesWithoutS = w1.scenario.sentenceIndices.filter(i => i !== sentenceIdx);
+                    for (const w2 of withoutSentence) {
+                        const w2Indices = w2.scenario.sentenceIndices;
+                        if (w1IndicesWithoutS.length === w2Indices.length &&
+                            w1IndicesWithoutS.every(i => w2Indices.includes(i))) {
+                            deltaPairs.push({
+                                w1Idx: w1.idx,
+                                w2Idx: w2.idx,
+                                w1Len: w1.scenario.sentenceIndices.length,
+                                w2Len: w2.scenario.sentenceIndices.length,
+                                w1Type: w1.scenario.type
+                            });
+                        }
+                    }
+                }
+                return { withSentence, withoutSentence, deltaPairs };
             });
         }
     }

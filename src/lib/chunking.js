@@ -402,29 +402,33 @@ function computeDifferentialSignal(sentenceIdx, scenarios, allScores, cfg = SIGN
     }
 
     // Find delta pairs: two windows that differ by exactly this sentence
-    // A window W1 (with S) and W2 (without S) form a pair if:
-    //   W2's indices are a subset of W1's indices (minus S)
-    //   OR W1's indices (minus S) are a subset of W2's indices
-    for (const w1 of withSentence) {
-        const w1IndicesWithoutS = w1.scenario.sentenceIndices.filter(i => i !== sentenceIdx);
-
-        for (const w2 of withoutSentence) {
-            const w2Indices = w2.scenario.sentenceIndices;
-
-            // Check if w2 is exactly w1 minus S (perfect pair)
-            if (w1IndicesWithoutS.length === w2Indices.length &&
-                w1IndicesWithoutS.every(i => w2Indices.includes(i))) {
-
-                const w1Len = w1.scenario.sentenceIndices.length;
-                const w2Len = w2.scenario.sentenceIndices.length;
-                const isolatedScore = (w1.score * w1Len) - (w2.score * w2Len);
-
-                // Raw delta (the old strategy)
-                const rawDelta = w1.score - w2.score;
-
-                // Weight by the confidence of the larger window (w1, which includes S)
-                const pairConfidence = conf[w1.scenario.type] || 0.15;
-                deltas.push({ isolated: isolatedScore, raw: rawDelta, confidence: pairConfidence });
+    if (sentenceToScenarioMap && sentenceToScenarioMap[sentenceIdx] && sentenceToScenarioMap[sentenceIdx].deltaPairs) {
+        // ── Fast path (tuning): use precomputed structural pairs ──
+        const pairs = sentenceToScenarioMap[sentenceIdx].deltaPairs;
+        for (let i = 0; i < pairs.length; i++) {
+            const dp = pairs[i];
+            const w1Score = allScores[dp.w1Idx] || 0;
+            const w2Score = allScores[dp.w2Idx] || 0;
+            const isolatedScore = (w1Score * dp.w1Len) - (w2Score * dp.w2Len);
+            const rawDelta = w1Score - w2Score;
+            const pairConfidence = conf[dp.w1Type] || 0.15;
+            deltas.push({ isolated: isolatedScore, raw: rawDelta, confidence: pairConfidence });
+        }
+    } else {
+        // ── Slow path (regular analysis): dynamically find delta pairs ──
+        for (const w1 of withSentence) {
+            const w1IndicesWithoutS = w1.scenario.sentenceIndices.filter(i => i !== sentenceIdx);
+            for (const w2 of withoutSentence) {
+                const w2Indices = w2.scenario.sentenceIndices;
+                if (w1IndicesWithoutS.length === w2Indices.length &&
+                    w1IndicesWithoutS.every(i => w2Indices.includes(i))) {
+                    const w1Len = w1.scenario.sentenceIndices.length;
+                    const w2Len = w2.scenario.sentenceIndices.length;
+                    const isolatedScore = (w1.score * w1Len) - (w2.score * w2Len);
+                    const rawDelta = w1.score - w2.score;
+                    const pairConfidence = conf[w1.scenario.type] || 0.15;
+                    deltas.push({ isolated: isolatedScore, raw: rawDelta, confidence: pairConfidence });
+                }
             }
         }
     }

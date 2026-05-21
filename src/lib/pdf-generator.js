@@ -123,8 +123,8 @@ function injectHighlightsIntoDOM(container, chunks) {
                     // Span styling mapped specifically for pdfmake
                     const mark = document.createElement('span');
                     mark.textContent = span.text;
-                    mark.style.backgroundColor = span.label === 'ai' ? '#EF4444' : '#F59E0B'; // rgb colors are more reliable in pdfmake core
-                    mark.style.color = '#FFFFFF'; // force white text over solid background since transparency acts weird sometimes in pdfMake rendering text underneath
+                    mark.style.backgroundColor = span.label === 'ai' ? '#FECACA' : '#FDE68A'; // Light tinted backgrounds preserve text readability
+                    mark.style.color = span.label === 'ai' ? '#991B1B' : '#92400E'; // Dark contrasting text so bold/italic formatting stays visible
                     fragment.appendChild(mark);
                 } else {
                     fragment.appendChild(document.createTextNode(span.text));
@@ -153,16 +153,26 @@ function injectHighlightsIntoDOM(container, chunks) {
 
 // ─── MAIN EXPORT ────────────────────────────────────────────
 export function generatePDFReport(data) {
+    // Guard: this function requires a browser DOM (pdfmake is client-only)
+    if (typeof document === 'undefined') {
+        console.error('[PDF Generator] Cannot generate PDF in a server environment (no DOM).');
+        return;
+    }
+
     const {
-        filename,
-        breakdown,
-        overallLabel,
-        chunks,
-        sentenceCount,
-        wordCount,
+        filename = 'document',
+        breakdown = { human: 0, mixed: 0, ai: 0 },
+        overallLabel = 'Unknown',
+        chunks = [],
+        sentenceCount = 0,
+        wordCount = 0,
         sourceHtml = null,
         date = new Date().toLocaleDateString()
-    } = data;
+    } = data || {};
+
+    if (!chunks || chunks.length === 0) {
+        console.warn('[PDF Generator] No chunks provided — generating report without highlights.');
+    }
 
     // 1. Convert our content to an injected DOM to get perfectly highlighted HTML
     const wrapper = document.createElement('div');
@@ -176,11 +186,11 @@ export function generatePDFReport(data) {
             const span = document.createElement('span');
             span.textContent = chunk.text + ' ';
             if (chunk.label === 'ai') {
-                span.style.backgroundColor = '#EF4444';
-                span.style.color = '#FFFFFF';
+                span.style.backgroundColor = '#FECACA';
+                span.style.color = '#991B1B';
             } else if (chunk.label === 'mixed') {
-                span.style.backgroundColor = '#F59E0B';
-                span.style.color = '#FFFFFF';
+                span.style.backgroundColor = '#FDE68A';
+                span.style.color = '#92400E';
             }
             wrapper.appendChild(span);
         });
@@ -229,7 +239,7 @@ export function generatePDFReport(data) {
             return {
                 margin: [40, 0, 40, 0],
                 columns: [
-                    { text: 'Powered by Jotril V3 Core Engine', fontSize: 8, color: '#94A3B8' },
+                    { text: `${fname} — Powered by Jotril AI Engine`, fontSize: 8, color: '#94A3B8' },
                     { text: `Page ${currentPage.toString()} of ${pageCount}`, alignment: 'right', fontSize: 8, color: '#94A3B8' }
                 ]
             };
@@ -245,7 +255,7 @@ export function generatePDFReport(data) {
                     widths: ['*'],
                     body: [[{
                         text: [
-                            { text: 'DOCUMENT ASSESSMENT\n', fontSize: 11, bold: true, margin: [0, 0, 0, 4], opacity: 0.9 },
+                            { text: 'DOCUMENT ASSESSMENT\n', fontSize: 11, bold: true, margin: [0, 0, 0, 4], color: '#E2E8F0' },
                             { text: overallLabel.toUpperCase(), fontSize: 20, bold: true }
                         ],
                         alignment: 'center',
