@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "node --import ./tests/setup.mjs --test tests/*.test.mjs",
     "postinstall": "prisma generate"
   },
   "dependencies": {

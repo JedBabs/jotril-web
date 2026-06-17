@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
@@ -33,6 +33,7 @@ import ScoreGauge from "@/components/ScoreGauge";
 import ColdStartOverlay from "@/components/ColdStartOverlay";
 import ToastContainer, { showToast } from "@/components/Toast";
 import { generateHardwareVector } from "@/lib/fingerprint";
+import { useAnalyze } from "@/hooks/useAnalyze";
 import { useProcess } from "@/components/ProcessContext";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
 
@@ -50,18 +51,33 @@ export default function EnhancedAccountPortal() {
     const [stats, setStats] = useState(null);
     const [isDataLoaded, setIsDataLoaded] = useState(false);
     const [devMode, setDevMode] = useState(false);
-
-    // Analysis State
-    const { isActive, openProcess, simulateProgress, updateProcess, closeProcess } = useProcess();
-    const [results, setResults] = useState(null);
-    const [breakdown, setBreakdown] = useState(null);
-    const [overallLabel, setOverallLabel] = useState("");
-    const [coldStart, setColdStart] = useState(false);
     const [deviceHash, setDeviceHash] = useState(null);
-    const [lastText, setLastText] = useState("");
-    const [scannedFile, setScannedFile] = useState(null);
-    const [sourceHtml, setSourceHtml] = useState(null);
-    const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
+
+    const refreshDashboard = useCallback(() => {
+        fetch('/api/dashboard')
+            .then((response) => response.json())
+            .then((data) => {
+                if (!data.error) setStats(data);
+            })
+            .catch((err) => console.error("Dashboard data fetch failed:", err));
+    }, []);
+
+    const {
+        results,
+        breakdown,
+        overallLabel,
+        coldStart,
+        scannedFile,
+        sourceHtml,
+        quotaRefreshKey,
+        isActive,
+        lastText,
+        handleAnalyze,
+        handleRetry,
+        resetResults,
+    } = useAnalyze({ deviceHash, onAfterComplete: refreshDashboard });
+
+    const { openProcess, simulateProgress, closeProcess } = useProcess();
 
     // Sync session role if database role has changed (e.g. after manual upgrade)
     useEffect(() => {
@@ -96,119 +112,6 @@ export default function EnhancedAccountPortal() {
             fetchData();
         }
     }, [status]);
-
-    // Removed inline key handlers; moved to specific subpage
-    const handleAnalyze = async (text, file = null) => {
-        if ((!text || text.trim() === "") && !file) {
-            return showToast("Please enter text or upload a file first.", "warning");
-        }
-
-        setScannedFile(file || null);
-        openProcess("analyze", "🔍 Jotril is analyzing linguistic patterns...", "Connecting to Jotril core...");
-
-        try {
-            let res;
-            if (file) {
-                const formData = new FormData();
-                formData.append("file", file);
-                formData.append("hardwareFootprint", JSON.stringify(deviceHash));
-                res = await fetch("/api/analyze", { method: "POST", body: formData });
-            } else {
-                res = await fetch("/api/analyze", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ text, hardwareFootprint: deviceHash }),
-                });
-            }
-
-            if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                if (data.type === "COLD_START") { setColdStart(true); closeProcess(); return; }
-                if (data.limitExceeded) {
-                    showToast(data.error || "Quota limit exceeded. Please upgrade your tier.", "error");
-                    closeProcess();
-                    setQuotaRefreshKey((k) => k + 1);
-                    return;
-                }
-                showToast(data.error || "Analysis engine returned an error.", "error");
-                closeProcess();
-                return;
-            }
-
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop(); // keep the last incomplete chunk in buffer
-
-                let currentEvent = null;
-                for (const line of lines) {
-                    if (line.startsWith('event: ')) {
-                        currentEvent = line.substring(7).trim();
-                    } else if (line.startsWith('data: ')) {
-                        const dataStr = line.substring(6).trim();
-                        if (!dataStr) continue;
-
-                        try {
-                            const data = JSON.parse(dataStr);
-
-                            if (currentEvent === 'progress') {
-                                updateProcess(data.progress, data.step);
-                            } else if (currentEvent === 'complete') {
-                                setResults(data.chunks);
-                                setBreakdown(data.breakdown || {});
-                                setOverallLabel(data.overallLabel || "");
-                                setSourceHtml(data.sourceHtml || null);
-                                showToast(data.cached ? "Results loaded from cache!" : `Analysis complete!`, "success");
-
-                                if (file) {
-                                    try {
-                                        const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
-                                        libGen({
-                                            filename: file.name,
-                                            breakdown: data.breakdown || {},
-                                            overallLabel: data.overallLabel || "",
-                                            chunks: data.chunks,
-                                            sentenceCount: data.chunks.length || 0,
-                                            wordCount: data.chunks.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
-                                            sourceHtml: data.sourceHtml || null
-                                        });
-                                        showToast("PDF report generated successfully", "success");
-                                    } catch (err) {
-                                        console.error('Error generating PDF:', err);
-                                    }
-                                }
-                            } else if (currentEvent === 'error') {
-                                if (data.type === "COLD_START") {
-                                    setColdStart(true);
-                                } else if (data.limitExceeded) {
-                                    showToast(data.error || "Quota limit exceeded.", "error");
-                                } else {
-                                    showToast(data.error || "Analysis engine returned an error.", "error");
-                                }
-                            }
-                        } catch (e) {
-                            console.error('Error parsing stream data', e);
-                        }
-                    }
-                }
-            }
-            setQuotaRefreshKey(k => k + 1);
-            // Refresh dashboard data too
-            fetch('/api/dashboard').then(r => r.json()).then(d => setStats(d));
-            closeProcess();
-        } catch (e) {
-            console.error(e);
-            showToast("Failed to reach the analysis engine. Please try again.", "error");
-            closeProcess();
-        }
-    };
 
     if (status === 'loading' || !isDataLoaded) {
         return (
@@ -336,7 +239,7 @@ export default function EnhancedAccountPortal() {
                                     >
                                         <div className="rounded-[32px] p-1 bg-gradient-to-br from-silver/20 to-transparent">
                                             <div className="rounded-[31px]" style={{ background: "var(--dyn-glass-bg)", backdropFilter: "blur(24px)" }}>
-                                                <FileUploader onAnalyze={handleAnalyze} disabled={isActive} deviceHash={deviceHash} />
+                                                <FileUploader onAnalyze={handleAnalyze} disabled={isActive} deviceHash={deviceHash} initialText={lastText} />
                                             </div>
                                         </div>
                                     </motion.div>
@@ -345,10 +248,10 @@ export default function EnhancedAccountPortal() {
 
 
                                 {coldStart && (
-                                    <ColdStartOverlay onRetry={() => handleAnalyze(lastText)} />
+                                    <ColdStartOverlay onRetry={handleRetry} />
                                 )}
 
-                                {results && !isActive && (
+                                {results && (
                                     <motion.div
                                         initial={{ opacity: 0, y: 30 }}
                                         animate={{ opacity: 1, y: 0 }}
@@ -391,7 +294,7 @@ export default function EnhancedAccountPortal() {
                                                 <motion.button
                                                     whileHover={{ scale: 1.05 }}
                                                     whileTap={{ scale: 0.95 }}
-                                                    onClick={() => { setResults(null); setScannedFile(null); setSourceHtml(null); }}
+                                                    onClick={resetResults}
                                                     className="px-5 py-2.5 glass-card rounded-xl font-bold text-xs"
                                                 >
                                                     New Scan

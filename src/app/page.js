@@ -9,6 +9,7 @@ import ScoreGauge from "@/components/ScoreGauge";
 import ColdStartOverlay from "@/components/ColdStartOverlay";
 import ToastContainer, { showToast } from "@/components/Toast";
 import { usePPP } from "@/hooks/usePPP";
+import { useAnalyze } from "@/hooks/useAnalyze";
 import QuotaBar from "@/components/QuotaBar";
 import SignUpNudge from "@/components/SignUpNudge";
 import InteractiveBackground from "@/components/InteractiveBackground";
@@ -202,19 +203,25 @@ export default function Home() {
     }, []);
 
     const { premiumPricing } = usePPP();
-    const { isActive, openProcess, simulateProgress, updateProcess, closeProcess } = useProcess();
-    const [results, setResults] = useState(null);
-    const [breakdown, setBreakdown] = useState(null);
-    const [overallLabel, setOverallLabel] = useState("");
-    const [coldStart, setColdStart] = useState(false);
+    const { openProcess, simulateProgress, closeProcess } = useProcess();
     const [deviceHash, setDeviceHash] = useState(null);
-    const [lastText, setLastText] = useState("");
-    const [scannedFile, setScannedFile] = useState(null);
-    const [sourceHtml, setSourceHtml] = useState(null);
     const [openFaq, setOpenFaq] = useState(null);
-    const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
     const { data: session } = useSession();
     const [devMode, setDevMode] = useState(false);
+    const {
+        results,
+        breakdown,
+        overallLabel,
+        coldStart,
+        scannedFile,
+        sourceHtml,
+        quotaRefreshKey,
+        isActive,
+        lastText,
+        handleAnalyze,
+        handleRetry,
+        resetResults,
+    } = useAnalyze({ deviceHash });
 
     // Mouse parallax for hero orbs
     const mouseX = useMotionValue(0);
@@ -239,131 +246,6 @@ export default function Home() {
 
     const isLoggedIn = !!session?.user;
     const userRole = session?.user?.role || "UNAUTHENTICATED";
-
-    const handleAnalyze = async (text, file = null) => {
-        if ((!text || text.trim() === "") && !file) {
-            return showToast("Please enter text or upload a file first.", "warning");
-        }
-
-        openProcess("analyze", "Analyzing Scope", "Initializing Jotril Engine...");
-        setScannedFile(file || null);
-
-        try {
-            let res;
-            if (file) {
-                const formData = new FormData();
-                formData.append("file", file);
-                formData.append("hardwareFootprint", JSON.stringify(deviceHash));
-                res = await fetch("/api/analyze", { method: "POST", body: formData });
-            } else {
-                res = await fetch("/api/analyze", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ text, hardwareFootprint: deviceHash }),
-                });
-            }
-
-            if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                if (data.type === "COLD_START") { setColdStart(true); closeProcess(); return; }
-                if (data.limitExceeded) {
-                    showToast(data.error || "Quota limit exceeded. Please upgrade your tier.", "error");
-                    closeProcess();
-                    setQuotaRefreshKey((k) => k + 1);
-                    return;
-                }
-                showToast(data.error || "Analysis engine returned an error.", "error");
-                closeProcess();
-                return;
-            }
-
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop(); // keep the last incomplete chunk in buffer
-
-                let currentEvent = null;
-                for (const line of lines) {
-                    if (line.startsWith('event: ')) {
-                        currentEvent = line.substring(7).trim();
-                    } else if (line.startsWith('data: ')) {
-                        const dataStr = line.substring(6).trim();
-                        if (!dataStr) continue;
-
-                        try {
-                            const data = JSON.parse(dataStr);
-
-                            if (currentEvent === 'progress') {
-                                updateProcess(data.progress, data.step);
-                            } else if (currentEvent === 'complete') {
-                                setResults(data.chunks);
-                                setBreakdown(data.breakdown || {});
-                                setOverallLabel(data.overallLabel || "");
-                                setSourceHtml(data.sourceHtml || null);
-                                if (data.cached) {
-                                    showToast("Results loaded from cache — 0 points used!", "success");
-                                } else {
-                                    showToast(`Analysis complete! ${data.pointsCost || 0} points used.`, "success");
-                                }
-
-                                if (file) {
-                                    try {
-                                        const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
-                                        libGen({
-                                            filename: file.name,
-                                            breakdown: data.breakdown || {},
-                                            overallLabel: data.overallLabel || "",
-                                            chunks: data.chunks,
-                                            sentenceCount: data.chunks.length || 0,
-                                            wordCount: data.chunks.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
-                                            sourceHtml: data.sourceHtml || null
-                                        });
-                                        showToast("PDF report generated successfully", "success");
-                                    } catch (err) {
-                                        console.error('Error generating PDF:', err);
-                                    }
-                                }
-                            } else if (currentEvent === 'error') {
-                                if (data.type === "COLD_START") {
-                                    setColdStart(true);
-                                } else if (data.limitExceeded) {
-                                    showToast(data.error || "Quota limit exceeded.", "error");
-                                } else {
-                                    showToast(data.error || "Analysis engine returned an error.", "error");
-                                }
-                            }
-                        } catch (e) {
-                            console.error('Error parsing stream data', e);
-                        }
-                    }
-                }
-            }
-            closeProcess();
-            setQuotaRefreshKey((k) => k + 1);
-        } catch (e) {
-            console.error(e);
-            showToast("Failed to reach the analysis engine. Please try again.", "error");
-            closeProcess();
-        }
-    };
-
-    const handleRetry = () => {
-        setColdStart(false);
-        if (lastText) handleAnalyze(lastText);
-    };
-
-    const wordCount = results
-        ? results.reduce((sum, c) => sum + c.text.trim().split(/\s+/).length, 0)
-        : 0;
-
-    const heroWords = ["Detect", "AI-Generated", "Text"];
 
     return (
         <main
@@ -584,7 +466,7 @@ export default function Home() {
                                 className="rounded-[22px]"
                                 style={{ background: "var(--dyn-glass-bg)", backdropFilter: "blur(24px)" }}
                             >
-                                <FileUploader onAnalyze={handleAnalyze} disabled={isActive} deviceHash={deviceHash} />
+                                <FileUploader onAnalyze={handleAnalyze} disabled={isActive} deviceHash={deviceHash} initialText={lastText} />
                             </div>
                         </motion.div>
                     )}
@@ -597,7 +479,7 @@ export default function Home() {
                         </motion.div>
                     )}
 
-                    {results && !isActive && (
+                    {results && (
                         <motion.div
                             key="results"
                             initial={{ opacity: 0, y: 40, scale: 0.97 }}
@@ -657,7 +539,7 @@ export default function Home() {
                                     <motion.button
                                         whileHover={{ scale: 1.03 }}
                                         whileTap={{ scale: 0.98 }}
-                                        onClick={() => { setResults(null); setScannedFile(null); setSourceHtml(null); }}
+                                        onClick={resetResults}
                                         className="px-6 py-2.5 rounded-full font-bold text-sm bg-silver/30 hover:bg-silver/50 transition-colors"
                                         style={{ color: "var(--dyn-text-navy)" }}
                                     >
@@ -930,7 +812,7 @@ export default function Home() {
                             <p className="text-sm mt-2" style={{ color: "var(--dyn-ash)" }}>Perfect for trying out Jotril</p>
                             <div className="my-6 h-px" style={{ background: "var(--dyn-silver)" }} />
                             <ul className="space-y-3">
-                                {["5 text scans per day", "100 points daily budget", "Sentence-level heatmap", "PDF & DOCX support"].map((f, i) => (
+                                {["5 text scans per day", "400 points daily budget", "Sentence-level heatmap", "PDF & DOCX support"].map((f, i) => (
                                     <li key={i} className="flex items-center gap-3 text-sm" style={{ color: "var(--dyn-text-navy)" }}>
                                         <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="#10B981">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
@@ -991,7 +873,7 @@ export default function Home() {
                                 <p className="text-sm mt-2" style={{ color: "var(--dyn-ash)" }}>For professionals and teams</p>
                                 <div className="my-6 h-px" style={{ background: "var(--dyn-silver)" }} />
                                 <ul className="space-y-3">
-                                    {["30 text scans per day", "500 points daily budget", "Developer API access", "Up to 20MB uploads", "Priority engine access", "Priority support"].map((f, i) => (
+                                    {["30 text scans per day", "2,500 points daily budget", "Developer API access", "Up to 20MB uploads", "Priority engine access", "Priority support"].map((f, i) => (
                                         <li key={i} className="flex items-center gap-3 text-sm" style={{ color: "var(--dyn-text-navy)" }}>
                                             <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="var(--dyn-accent-blue)">
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />

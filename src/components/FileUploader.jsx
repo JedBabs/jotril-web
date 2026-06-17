@@ -3,9 +3,9 @@ import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { showToast } from "./Toast";
 
-export default function FileUploader({ onAnalyze, disabled, deviceHash }) {
+export default function FileUploader({ onAnalyze, disabled, deviceHash, initialText = "" }) {
     const [isDragging, setIsDragging] = useState(false);
-    const [text, setText] = useState("");
+    const [text, setText] = useState(initialText);
     const [isParsing, setIsParsing] = useState(false);
     const [costPreview, setCostPreview] = useState(null);
     const debounceRef = useRef(null);

@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0E001F" />
+      <stop offset="100%" stop-color="#05000A" />
+    </linearGradient>
+
+    <!-- Border Gradient -->
+    <linearGradient id="border-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#B56EFF" />
+      <stop offset="100%" stop-color="#06B6D4" />
+    </linearGradient>
+
+    <style>
+      /* Base path configurations */
+      .j-path {
+        transform-origin: 50px 51px;
+      }
+
+      /* Glitch animation for Red/Pink layer */
+      @keyframes glitch-pink {
+        0%, 88%, 94%, 100% {
+          transform: translate(0, 0);
+          opacity: 0;
+          fill: #FF5DD0;
+        }
+        89% {
+          transform: translate(3px, -1.5px);
+          opacity: 0.8;
+          fill: #FF5DD0;
+        }
+        90% {
+          transform: translate(-1.5px, 2px);
+          opacity: 0.9;
+          fill: #FF7AC6;
+        }
+        91% {
+          transform: translate(0, 0);
+          opacity: 0;
+        }
+        92% {
+          transform: translate(2px, 1px);
+          opacity: 0.7;
+          fill: #FF5DD0;
+        }
+        93% {
+          transform: translate(0, 0);
+          opacity: 0;
+        }
+      }
+
+      /* Glitch animation for Cyan/Blue layer */
+      @keyframes glitch-cyan {
+        0%, 88%, 94%, 100% {
+          transform: translate(0, 0);
+          opacity: 0;
+          fill: #06B6D4;
+        }
+        89% {
+          transform: translate(-3px, 1.5px);
+          opacity: 0.8;
+          fill: #06B6D4;
+        }
+        90% {
+          transform: translate(2px, -1px);
+          opacity: 0.9;
+          fill: #06B6D4;
+        }
+        91% {
+          transform: translate(0, 0);
+          opacity: 0;
+        }
+        92% {
+          transform: translate(-2px, -2px);
+          opacity: 0.7;
+          fill: #2563EB;
+        }
+        93% {
+          transform: translate(0, 0);
+          opacity: 0;
+        }
+      }
+
+      /* Glitch animation for main White layer */
+      @keyframes glitch-main {
+        0%, 88%, 94%, 100% {
+          transform: translate(0, 0);
+          filter: none;
+        }
+        89% {
+          transform: translate(1px, -0.5px);
+          filter: drop-shadow(-1px 0.5px 0px rgba(6, 182, 212, 0.5));
+        }
+        90% {
+          transform: translate(-0.5px, 1px);
+          filter: drop-shadow(1px -0.5px 0px rgba(255, 93, 208, 0.5));
+        }
+        91% {
+          transform: translate(0, 0);
+          filter: none;
+        }
+        92% {
+          transform: translate(0.5px, 0.5px);
+        }
+        93% {
+          transform: translate(0, 0);
+        }
+      }
+
+      /* Applying animations */
+      .j-cyan {
+        animation: glitch-cyan 4s steps(1) infinite;
+      }
+      .j-pink {
+        animation: glitch-pink 4s steps(1) infinite;
+      }
+      .j-main {
+        animation: glitch-main 4s steps(1) infinite;
+      }
+    </style>
+  </defs>
+
+  <!-- Background squircle -->
+  <rect x="4" y="4" width="92" height="92" rx="22" fill="url(#bg-grad)" stroke="url(#border-grad)" stroke-width="2.5" />
+
+  <!-- Glitching J Group -->
+  <g id="j-logo-group">
+    <!-- Blue/Cyan shadow/layer -->
+    <path class="j-path j-cyan" d="M56 15 H78 V62 C78 76 66 87 50 87 C34 87 22 76 22 62 V50 H40 V62 C40 67 44 71 50 71 C56 71 56 67 56 62 Z" fill="#06B6D4" opacity="0" />
+    
+    <!-- Red/Pink shadow/layer -->
+    <path class="j-path j-pink" d="M56 15 H78 V62 C78 76 66 87 50 87 C34 87 22 76 22 62 V50 H40 V62 C40 67 44 71 50 71 C56 71 56 67 56 62 Z" fill="#FF5DD0" opacity="0" />
+    
+    <!-- Stable White layer -->
+    <path class="j-path j-main" d="M56 15 H78 V62 C78 76 66 87 50 87 C34 87 22 76 22 62 V50 H40 V62 C40 67 44 71 50 71 C56 71 56 67 56 62 Z" fill="#FFFFFF" />
+  </g>
+</svg>
