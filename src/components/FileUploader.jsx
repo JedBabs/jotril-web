@@ -200,12 +200,14 @@ export default function FileUploader({ onAnalyze, disabled, deviceHash, initialT
 
                     <div className="flex gap-3 w-full sm:w-auto">
                         <button
+                            type="button"
                             onClick={() => { setText(""); setCostPreview(null); }}
                             className="bg-transparent text-[var(--dyn-ash)] font-bold text-[14px] px-6 py-3.5 rounded-full hover:bg-[var(--dyn-silver)] hover:text-[var(--dyn-text-navy)] transition-colors"
                         >
                             Reset
                         </button>
                         <button
+                            type="button"
                             onClick={handleAnalyze}
                             disabled={disabled || isParsing || !text.trim()}
                             className="flex-1 sm:flex-none btn-shimmer relative bg-gradient-to-r from-[var(--dyn-accent-blue)] to-[var(--dyn-accent-purple)] text-white font-bold text-[15px] px-10 py-3.5 rounded-full shadow-[0_8px_24px_rgba(37,99,235,0.25)] hover:shadow-[0_12px_32px_rgba(37,99,235,0.4)] transition-all disabled:opacity-50 disabled:cursor-not-allowed group/btn overflow-hidden"

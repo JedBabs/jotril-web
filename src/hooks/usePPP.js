@@ -50,7 +50,7 @@ export function usePPP() {
                 }
             })
             .catch((err) => {
-                console.warn("[PPP] Failed to fetch geolocation, falling back to default styling", err);
+                console.warn("[PPP] Failed to fetch geolocation, falling back to default pricing");
             })
             .finally(() => {
                 if (mounted) setLoading(false);

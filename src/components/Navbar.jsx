@@ -152,7 +152,13 @@ export default function Navbar({ session, onSignOut }) {
                         borderColor: "var(--dyn-glass-border)",
                         boxShadow: "0 1px 40px rgba(0,0,0,0.08)",
                     }
-                    : { background: "transparent" }
+                    : {
+                        background: "rgba(0,0,0,0)",
+                        backdropFilter: "blur(0px)",
+                        WebkitBackdropFilter: "blur(0px)",
+                        borderColor: "rgba(237, 242, 252, 0)",
+                        boxShadow: "0 1px 40px rgba(0,0,0,0)",
+                    }
             }
         >
             <div className="max-w-7xl mx-auto flex items-center justify-between px-6 lg:px-10 py-3.5">

@@ -3,9 +3,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
 
 const labelConfig = {
-    human: { bg: "bg-score-human/10", hover: "hover:bg-score-human/20", dot: "bg-score-human", text: "Human Written", glow: "shadow-[0_0_12px_rgba(16,185,129,0.3)]" },
-    mixed: { bg: "bg-score-mixed/10", hover: "hover:bg-score-mixed/20", dot: "bg-score-mixed", text: "Mixed", glow: "shadow-[0_0_12px_rgba(245,158,11,0.3)]" },
-    ai: { bg: "bg-score-ai/15", hover: "hover:bg-score-ai/25", dot: "bg-score-ai", text: "AI Generated", glow: "shadow-[0_0_12px_rgba(239,68,68,0.3)]" },
+    human: { bg: "bg-score-human/20", hover: "hover:bg-score-human/30", dot: "bg-score-human", text: "Human Written", glow: "shadow-[0_0_12px_rgba(16,185,129,0.4)]" },
+    mixed: { bg: "bg-score-mixed/20", hover: "hover:bg-score-mixed/30", dot: "bg-score-mixed", text: "Mixed", glow: "shadow-[0_0_12px_rgba(245,158,11,0.4)]" },
+    ai: { bg: "bg-score-ai/25", hover: "hover:bg-score-ai/35", dot: "bg-score-ai", text: "AI Generated", glow: "shadow-[0_0_12px_rgba(239,68,68,0.4)]" },
 };
 
 export default function HeatmapViewer({ chunks, devMode = false }) {
@@ -47,7 +47,10 @@ export default function HeatmapViewer({ chunks, devMode = false }) {
             </div>
 
             {/* Heatmap Text Body */}
-            <div className="relative heatmap-container p-6 md:p-8 glass-card !rounded-2xl leading-[2] text-[15px] font-normal text-navy">
+            <div
+                className="relative heatmap-container p-6 md:p-8 glass-card !rounded-2xl leading-[2] text-[15px] font-normal text-navy"
+                style={{ backgroundColor: 'color-mix(in srgb, var(--dyn-glass-bg) 70%, white 30%)' }}
+            >
                 {chunks.map((chunk, i) => {
                     const config = labelConfig[chunk.label] || labelConfig.mixed;
                     return (
