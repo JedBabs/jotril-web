@@ -11,6 +11,7 @@
  * Smart cap system preserves full accuracy for short/medium documents while preventing
  * runaway API calls on very long documents.
  */
+import { isExcludable } from './exclusion-filter.js';
 
 /**
  * Splits text into paragraphs by double-newline boundaries.
@@ -53,6 +54,11 @@ export function generateSentenceCombinations(paragraph) {
 
     if (sentences.length === 0) {
         return [{ text: paragraph, type: 'paragraph', sentenceIndices: [] }];
+    }
+
+    // If the entire paragraph is generic/excludable, bypass scoring entirely
+    if (sentences.every(s => isExcludable(s))) {
+        return [];
     }
 
     const combinations = [];
@@ -572,6 +578,13 @@ export function attributeScoresToSentences(sentences, scenarios, scores, burstin
             return { text: sentence + ' ', score: 0 };
         }
 
+        // ── Smart Exclusion Bypass ──────────────────────────────────
+        // If this exact sentence is a generic heading, date, or number, force score to 0.
+        // It still renders normally to the user, but will never light up red.
+        if (isExcludable(sentence)) {
+            return { text: sentence + ' ', score: 0 };
+        }
+
         // ── Compute three signals ────────────────────────────────────
         const directScore = computeDirectSignal(windowHits, cfg);
         const differentialScore = computeDifferentialSignal(sentenceIdx, scenarios, adjustedScores, cfg, sentenceToScenarioMap);
@@ -780,3 +793,4 @@ export function classifyResults(chunks, engineCfg = null) {
 
     return { chunks: classified, breakdown, overallLabel };
 }
+

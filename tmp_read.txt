@@ -140,10 +140,6 @@ async function hashString(str) {
 }
 
 export async function generateHardwareVector() {
-    if (typeof window === 'undefined' || typeof document === 'undefined') {
-        const fallback = 'headless-node-execution';
-        return { canvasHash: fallback, voicesHash: fallback, pluginsHash: fallback, fontsHash: fallback, audioHash: fallback, hardwareConcurrency: 8 };
-    }
     const [canvas, webgl, audio, fonts, voices] = await Promise.all([
         getCanvasFingerprint(),
         getWebGLFingerprint(),
@@ -216,4 +212,3 @@ export function calculateFuzzyMatchScore(storedVector, newVector) {
     // Network, DevicePixelRatio omitted from strict grading due to docking stations / 4G switching
     return score;
 }
-

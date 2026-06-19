@@ -3,13 +3,20 @@
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { QueueManager } from '@/lib/queue-manager';
 
 export default function DevDebugOverlay() {
     const { data: session } = useSession();
     const [errors, setErrors] = useState([]);
     const [isOpen, setIsOpen] = useState(false);
+    const [telemetry, setTelemetry] = useState(null);
 
     useEffect(() => {
+        const unsubscribeQueue = QueueManager.subscribe((payload) => {
+            if (payload.telemetry) {
+                setTelemetry(payload.telemetry);
+            }
+        });
         if (!session?.user?.isDev) return;
 
         // Intercept Window Errors
@@ -88,6 +95,7 @@ export default function DevDebugOverlay() {
             window.removeEventListener('unhandledrejection', handlePromiseRejection);
             console.error = originalConsoleError;
             window.fetch = originalFetch;
+            unsubscribeQueue();
         };
     }, [session?.user?.isDev]);
 
@@ -133,6 +141,16 @@ export default function DevDebugOverlay() {
                                 <button onClick={() => setIsOpen(false)} className="text-xs px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded border border-gray-600">Close</button>
                             </div>
                         </div>
+
+                        {telemetry && (
+                            <div className="p-3 border-b border-gray-800 bg-gray-900/50 space-y-1">
+                                <h4 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-2">Vercel Proxy Telemetry</h4>
+                                <div className="flex justify-between text-xs text-gray-400"><span>Chunks Processed:</span> <span className="font-mono text-green-400">{telemetry.processedChunks}</span></div>
+                                <div className="flex justify-between text-xs text-gray-400"><span>Network Drops:</span> <span className="font-mono text-amber-500">{telemetry.connectionDrops}</span></div>
+                                <div className="flex justify-between text-xs text-gray-400"><span>Sweeper Retries (T999):</span> <span className="font-mono text-purple-400">{telemetry.sweeperRetries}</span></div>
+                                <div className="flex justify-between text-xs text-gray-400 font-bold"><span>Edge Limit Load:</span> <span className="font-mono text-blue-400">{telemetry.edgeProxyCalls} / 100,000</span></div>
+                            </div>
+                        )}
 
                         <div className="flex-1 overflow-y-auto p-2 space-y-2">
                             {errors.length === 0 ? (

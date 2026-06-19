@@ -32,6 +32,7 @@ import HeatmapViewer from "@/components/HeatmapViewer";
 import ScoreGauge from "@/components/ScoreGauge";
 import ColdStartOverlay from "@/components/ColdStartOverlay";
 import ToastContainer, { showToast } from "@/components/Toast";
+import QueueSidebar from "@/components/QueueSidebar";
 import { generateHardwareVector } from "@/lib/fingerprint";
 import { useAnalyze } from "@/hooks/useAnalyze";
 import { useProcess } from "@/components/ProcessContext";
@@ -547,6 +548,9 @@ export default function EnhancedAccountPortal() {
                                 </div>
                             </div>
                         </div>
+
+                        {/* Background Queue Dashboard */}
+                        <QueueSidebar />
 
                         {/* Upgrade CTA / Extra Info */}
                         {tier === 'FREE' && (

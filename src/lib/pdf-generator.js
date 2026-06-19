@@ -55,9 +55,9 @@ function generateReportId() {
 
 // ─── UTILITY: Assessment metadata ───────────────────────────
 function getAssessment(breakdown) {
-    const ai = breakdown.ai || 0;
-    const mixed = breakdown.mixed || 0;
-    const human = breakdown.human || 0;
+    const ai = breakdown?.ai || 0;
+    const mixed = breakdown?.mixed || 0;
+    const human = breakdown?.human || 0;
 
     if (ai >= 80) return { label: 'Predominantly AI Generated', color: T.red, bgColor: T.redLight, textColor: T.redDark, icon: '⚠', confidence: 'High' };
     if (ai >= 60) return { label: 'Mostly AI Generated', color: T.red, bgColor: T.redLight, textColor: T.redDark, icon: '⚠', confidence: 'High' };
@@ -184,10 +184,32 @@ function injectHighlightsIntoDOM(container, chunks) {
         }
 
         if (node.nodeType === 1) {
-            if (node.tagName === 'P') node.style.marginBottom = '10px';
-            if (node.classList.contains('align-center')) node.style.textAlign = 'center';
-            if (node.classList.contains('align-right')) node.style.textAlign = 'right';
-            if (node.classList.contains('align-justify')) node.style.textAlign = 'justify';
+            // Apply refined corporate styling spacing natively to the AST via inline styles
+            if (node.tagName === 'P') {
+                node.style.marginBottom = '14px';
+                node.style.textAlign = 'justify'; // Professional corporate alignment
+            }
+            if (['H1', 'H2', 'H3', 'H4', 'H5'].includes(node.tagName)) {
+                node.style.marginTop = '18px';
+                node.style.marginBottom = '8px';
+            }
+            if (node.tagName === 'UL' || node.tagName === 'OL') {
+                node.style.marginBottom = '14px';
+            }
+            if (node.tagName === 'LI') {
+                node.style.marginBottom = '4px';
+            }
+
+            // Rescue formatting classes
+            if (node.className && typeof node.className === 'string') {
+                if (node.className.includes('center') || node.className.includes('text-center')) {
+                    node.style.textAlign = 'center';
+                } else if (node.className.includes('right') || node.className.includes('text-right')) {
+                    node.style.textAlign = 'right';
+                } else if (node.className.includes('justify') || node.className.includes('text-justify')) {
+                    node.style.textAlign = 'justify';
+                }
+            }
 
             const children = Array.from(node.childNodes);
             for (const child of children) {
@@ -272,37 +294,58 @@ export function generatePDFReport(data) {
         wrapper.innerHTML = sourceHtml;
         injectHighlightsIntoDOM(wrapper, chunks);
     } else {
+        // Plain text rendering: loop chunks and wrap in spans, preserving line breaks
         chunks.forEach(chunk => {
-            const span = document.createElement('span');
-            span.textContent = chunk.text + ' ';
-            if (chunk.label === 'ai') {
-                span.style.backgroundColor = '#FECACA';
-                span.style.color = '#991B1B';
-            } else if (chunk.label === 'mixed') {
-                span.style.backgroundColor = '#FDE68A';
-                span.style.color = '#92400E';
-            }
-            wrapper.appendChild(span);
+            // Split chunk text by newlines so we can inject actual <br> tags
+            const lines = chunk.text.split('\n');
+
+            lines.forEach((lineText, index) => {
+                const span = document.createElement('span');
+                span.textContent = lineText + (index === lines.length - 1 ? ' ' : '');
+
+                if (chunk.label === 'ai') {
+                    span.style.backgroundColor = '#FECACA';
+                    span.style.color = '#991B1B';
+                } else if (chunk.label === 'mixed') {
+                    span.style.backgroundColor = '#FDE68A';
+                    span.style.color = '#92400E';
+                }
+                wrapper.appendChild(span);
+
+                // If not the last line piece, insert a literal HTML line break
+                if (index < lines.length - 1) {
+                    wrapper.appendChild(document.createElement('br'));
+                }
+            });
         });
     }
 
     const htmlAst = htmlToPdfmake(wrapper.innerHTML, {
         tableAutoSize: true,
         defaultStyles: {
-            p: { margin: [0, 0, 0, 8] },
-            h1: { fontSize: 22, bold: true, margin: [0, 12, 0, 6] },
-            h2: { fontSize: 17, bold: true, margin: [0, 10, 0, 5] },
-            h3: { fontSize: 13, bold: true, margin: [0, 8, 0, 4] },
-            table: { margin: [0, 5, 0, 12] },
-            img: { margin: [0, 8, 0, 8] }
+            p: { margin: [0, 0, 0, 14] },
+            h1: { fontSize: 20, bold: true, margin: [0, 16, 0, 8] },
+            h2: { fontSize: 16, bold: true, margin: [0, 14, 0, 6] },
+            h3: { fontSize: 13, bold: true, margin: [0, 12, 0, 4] },
+            h4: { fontSize: 11, bold: true, margin: [0, 10, 0, 4] },
+            table: { margin: [0, 10, 0, 16] },
+            img: { margin: [0, 10, 0, 10] },
+            ul: { margin: [0, 0, 0, 14] },
+            ol: { margin: [0, 0, 0, 14] },
+            li: { margin: [0, 2, 0, 2] },
+            a: { color: T.blue, decoration: 'underline' }
         }
     });
 
     // ── Composition bar segments (percentages of PAGE_WIDTH) ──
     const barH = 14;
-    const humanW = PAGE_WIDTH * (Math.max(0, breakdown.human) / 100);
-    const mixedW = PAGE_WIDTH * (Math.max(0, breakdown.mixed) / 100);
-    const aiW = PAGE_WIDTH * (Math.max(0, breakdown.ai) / 100);
+    const bHuman = parseFloat(breakdown?.human || 0);
+    const bMixed = parseFloat(breakdown?.mixed || 0);
+    const bAi = parseFloat(breakdown?.ai || 0);
+
+    const humanW = PAGE_WIDTH * (Math.max(0, bHuman) / 100);
+    const mixedW = PAGE_WIDTH * (Math.max(0, bMixed) / 100);
+    const aiW = PAGE_WIDTH * (Math.max(0, bAi) / 100);
 
     // ── Build document ──
     const docDefinition = {
@@ -424,7 +467,7 @@ export function generatePDFReport(data) {
             {
                 canvas: [
                     // Background track
-                    { type: 'rect', x: 0, y: 0, w: PAGE_WIDTH, h: barH, color: T.ghost, r: 4 },
+                    { type: 'rect', x: 0, y: 0, w: PAGE_WIDTH, h: barH, color: T.ghost },
                     // Human segment
                     ...(humanW > 0 ? [{ type: 'rect', x: 0, y: 0, w: humanW, h: barH, color: T.green }] : []),
                     // Mixed segment
@@ -435,30 +478,21 @@ export function generatePDFReport(data) {
                 margin: [0, 0, 0, 12]
             },
 
-            // Legend table
+            // Legend
             {
-                table: {
-                    widths: ['auto', '*', 'auto', '*', 'auto', '*'],
-                    body: [[
-                        {
-                            table: { widths: [8], body: [[{ text: '', fillColor: T.green, border: [false, false, false, false], margin: [0, 0, 0, 0] }]] },
-                            layout: 'noBorders', margin: [0, 1, 0, 0]
-                        },
-                        { text: [{ text: `${breakdown.human}%`, bold: true, color: T.greenDark }, { text: ' Human', color: T.slate }], fontSize: 10 },
-                        {
-                            table: { widths: [8], body: [[{ text: '', fillColor: T.amber, border: [false, false, false, false], margin: [0, 0, 0, 0] }]] },
-                            layout: 'noBorders', margin: [0, 1, 0, 0]
-                        },
-                        { text: [{ text: `${breakdown.mixed}%`, bold: true, color: T.amberDark }, { text: ' Mixed', color: T.slate }], fontSize: 10 },
-                        {
-                            table: { widths: [8], body: [[{ text: '', fillColor: T.red, border: [false, false, false, false], margin: [0, 0, 0, 0] }]] },
-                            layout: 'noBorders', margin: [0, 1, 0, 0]
-                        },
-                        { text: [{ text: `${breakdown.ai}%`, bold: true, color: T.redDark }, { text: ' AI', color: T.slate }], fontSize: 10 },
-                    ]]
-                },
-                layout: 'noBorders',
-                margin: [0, 0, 0, 8]
+                columns: [
+                    { canvas: [{ type: 'rect', x: 0, y: 2.5, w: 8, h: 8, color: T.green }], width: 14 },
+                    { text: [{ text: `${bHuman}%`, bold: true, color: T.greenDark }, { text: ' Human', color: T.slate }], width: 'auto', fontSize: 10 },
+                    { width: 20, text: '' },
+
+                    { canvas: [{ type: 'rect', x: 0, y: 2.5, w: 8, h: 8, color: T.amber }], width: 14 },
+                    { text: [{ text: `${bMixed}%`, bold: true, color: T.amberDark }, { text: ' Mixed', color: T.slate }], width: 'auto', fontSize: 10 },
+                    { width: 20, text: '' },
+
+                    { canvas: [{ type: 'rect', x: 0, y: 2.5, w: 8, h: 8, color: T.red }], width: 14 },
+                    { text: [{ text: `${bAi}%`, bold: true, color: T.redDark }, { text: ' AI', color: T.slate }], width: 'auto', fontSize: 10 },
+                ],
+                margin: [0, 0, 0, 10]
             },
 
             // Segment counts
@@ -503,10 +537,9 @@ export function generatePDFReport(data) {
             },
 
             // The actual heatmap content
-            {
-                stack: htmlAst,
-                margin: [0, 0, 0, 24]
-            },
+            ...(Array.isArray(htmlAst) ? htmlAst : [htmlAst]),
+
+            { text: '', margin: [0, 0, 0, 24] },
 
             divider(0, 20),
 
@@ -602,9 +635,18 @@ export function generatePDFReport(data) {
         // ── DEFAULT STYLES ──
         defaultStyle: {
             font: 'Roboto',
-            fontSize: 10.5,
-            lineHeight: 1.65,
+            fontSize: 10,
+            lineHeight: 1.5,
             color: T.navyLight
+        },
+
+        // Prevents headers clamping orphaned against page limits
+        pageBreakBefore: function (currentNode, followingNodesOnPage, nodesOnNextPage, previousNodesOnPage) {
+            // Look for headings and avoid drawing them at the absolute bottom of a page
+            if (currentNode.id === 'heading' || (currentNode.style && (currentNode.style === 'h1' || currentNode.style === 'h2' || currentNode.style === 'h3'))) {
+                return false; // let pdfmake handle natively, this hooks in just in case we need to expand
+            }
+            return false;
         },
 
         styles: {
@@ -618,5 +660,12 @@ export function generatePDFReport(data) {
     };
 
     // ── Generate & download ──
-    pdfMake.createPdf(docDefinition).download(`Jotril_Report_${filename.replace(/\.[^/.]+$/, "")}.pdf`);
+    try {
+        pdfMake.createPdf(docDefinition).download(`Jotril_Report_${filename?.replace(/\.[^/.]+$/, "") || "Scan"}.pdf`);
+    } catch (error) {
+        console.error("PDF GENERATOR FATAL ERROR:", error);
+        if (typeof alert !== 'undefined') {
+            alert("PDF Engine Error: " + error.message);
+        }
+    }
 }

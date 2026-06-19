@@ -425,6 +425,15 @@ export default function ProcessOverlay({ isActive, variant, progress, title, ste
                                     {Math.round(progress)}%
                                 </span>
                             </div>
+
+                            {/* Warning Footer */}
+                            <div className="mt-8 text-center opacity-70">
+                                <p className="text-[10px] text-amber-400/80 font-bold tracking-widest uppercase flex items-center justify-center gap-1.5">
+                                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                                    Jotril requires active memory. Do not close this tab.
+                                </p>
+                            </div>
+
                         </motion.div>
                     </div>
                 </motion.div>
