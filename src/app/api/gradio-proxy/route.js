@@ -22,6 +22,9 @@ export async function POST(req) {
         }
 
         console.log(`[Proxy] Forwarding secure request to: ${targetUrl}`);
+        // Log what we are sending!
+        console.log("SENDING HEADERS:", options.headers);
+        console.log("SENDING BODY:", options.body);
         const hfResponse = await fetch(targetUrl, options);
 
         // Fetch exact output payload

@@ -3,7 +3,7 @@
  * Coordinates all chunk processing natively utilizing a bounded concurrency pool
  * and priority preemption queues. Includes Auto-Sweeper and Telemetry Hooks.
  */
-import { queryJotrilModel, queryJotrilBatch, SPACES } from './jotrilService.js';
+import { queryJotrilModel, SPACES } from './jotrilService.js';
 
 class JotrilQueueManager {
     constructor() {
@@ -11,7 +11,7 @@ class JotrilQueueManager {
             this.queue = [];
             this.activeJobs = new Map();
             this.activeWorkers = 0;
-            this.MAX_CONCURRENCY = 30; // 10 simultaneous chunks
+            this.MAX_CONCURRENCY = 60; // 10 simultaneous chunks
             this.listeners = new Set();
             this.telemetry = {
                 processedChunks: 0,
@@ -111,26 +111,16 @@ class JotrilQueueManager {
 
     async _runWorkerLoop() {
         while (this.queue.length > 0) {
-            if(this.queue.length === 0) break;
-            const batchWindow = [];
-            while(this.queue.length > 0 && batchWindow.length < 10) {
-                const peek = this.queue[0];
-                const p = this.activeJobs.get(peek.jobId);
-                if (!p) { this.queue.shift(); continue; }
-                batchWindow.push(this.queue.shift());
-            }
-            if(batchWindow.length === 0) continue;
-            const parentJob = this.activeJobs.get(batchWindow[0].jobId);
-            const chunkJob = batchWindow[0];
+            const chunkJob = this.queue.shift();
+
+            const parentJob = this.activeJobs.get(chunkJob.jobId);
             if (!parentJob) continue;
 
             this.telemetry.edgeProxyCalls++; // Log every single invocation sent to proxy!
 
             try {
                 const spaceName = SPACES[(chunkJob.chunkIndex) % SPACES.length];
-                const texts = batchWindow.map(c => c.chunkData.text);
-                const batchResults = await queryJotrilBatch(texts, spaceName);
-                const result = batchResults[0]; // just for variable mock
+                const result = await queryJotrilModel(chunkJob.chunkData.text, spaceName);
 
                 if (!result || result.error) throw new Error("Null or errored result from API");
 
@@ -139,7 +129,7 @@ class JotrilQueueManager {
                 this.telemetry.processedChunks += 1;
 
             } catch (err) {
-                console.error("Queue chunk " + chunkJob.chunkIndex + " execution completely failed natively:", err.message);
+                console.error("Queue chunk execution failure:", err);
                 parentJob.results[chunkJob.chunkIndex] = null;
                 parentJob.completedChunks += 1;
                 this.telemetry.connectionDrops += 1;
@@ -150,22 +140,20 @@ class JotrilQueueManager {
             // Finish check with Auto-Sweeper array parity
             if (parentJob.completedChunks >= parentJob.totalChunks) {
 
-                parentJob.sweepCount = parentJob.sweepCount || 0;
-                  // AUTO SWEEPER RETRY MECHANISM
+                // AUTO SWEEPER RETRY MECHANISM
                 const droppedIndices = [];
                 parentJob.results.forEach((res, idx) => {
                     if (res === null) droppedIndices.push(idx);
                 });
 
-                if (droppedIndices.length > 0 && parentJob.sweepCount < 3) {
+                if (droppedIndices.length > 0) {
                     console.log(`[Auto-Sweeper] Detected ${droppedIndices.length} drops! Injecting at Tier 999...`);
                     this.telemetry.sweeperRetries += droppedIndices.length;
                     this.MAX_CONCURRENCY = Math.max(10, Math.floor(this.MAX_CONCURRENCY / 1.5));
-                    console.warn(`[Auto-Sweeper] Downscaling concurrency gracefully to: ${this.MAX_CONCURRENCY}`);
+                    console.warn([Auto-Sweeper] Downscaling concurrency gracefully to: );
 
                     parentJob.completedChunks -= droppedIndices.length; // Rollback completion counter
 
-                    parentJob.sweepCount = (parentJob.sweepCount || 0) + 1;
                     const retryJobs = droppedIndices.map(idx => ({
                         jobId: parentJob.id,
                         chunkIndex: idx,
@@ -191,8 +179,6 @@ class JotrilQueueManager {
 }
 
 export const QueueManager = new JotrilQueueManager();
-
-
 
 
 
