@@ -203,7 +203,7 @@ export async function queryJotrilBatch(texts, spaceName) {
             });
             
             const rawResponse = await response.text();
-            if (rawResponse.includes("error")) throw new Error("Batch API Error");
+            if(rawResponse.includes("error")) { console.log(rawResponse); throw new Error("Batch API Error"); } throw new Error("Batch API Error");
             
             // Assuming the API returns [ ["ai", 0.9], ["human", 0.1], ... ]
             // or something similar when batched! We will just parse each result.
@@ -213,14 +213,22 @@ export async function queryJotrilBatch(texts, spaceName) {
                const eventId = eventIdMatch[1];
                const streamResp = await secureFetch(submitUrl + "/" + eventId, { method: "GET" });
                const streamData = await streamResp.text();
-               const finalMatch = streamData.match(/event: complete\n*data: (.+)/);
-               if (finalMatch) { 
-                   const resultData = JSON.parse(finalMatch[1]);
-                   return resultData[0]; // Assuming Gradio returns 2D array [[results]]
+               if (streamData.includes("event: complete")) {
+                   const splitData = streamData.split("event: complete");
+                   const dataBlock = splitData[splitData.length - 1];
+                   if (dataBlock.includes("data:")) {
+                       const jsonStr = dataBlock.substring(dataBlock.indexOf("data:") + 5).trim();
+                       try {
+                           const resultData = JSON.parse(jsonStr);
+                           return resultData[0]; // Assuming Gradio returns 2D array [[results]]
+                       } catch(err) {
+                           console.log("JSON Parse Error on stream:", jsonStr);
+                       }
+                   }
                }
             }
             throw new Error("Invalid batch parsing context");
-        } catch(e) {
+        } catch(e) { console.log(e);
             retryCount++;
             await new Promise(r => setTimeout(r, 1000));
         }
