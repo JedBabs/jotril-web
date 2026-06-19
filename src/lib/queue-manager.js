@@ -78,6 +78,7 @@ class JotrilQueueManager {
             totalChunks: chunks.length,
             completedChunks: 0,
             results: new Array(chunks.length).fill(null),
+            retries: new Array(chunks.length).fill(0),
             originalChunks: chunks, // Save for Sweeper
             tier: tier,
             onScanComplete
