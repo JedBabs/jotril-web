@@ -1,45 +1,15 @@
 const fs = require('fs');
-const path = require('path');
 
-// 1. Patch pdf-generator.js
-const pdfGenPath = path.join(__dirname, 'src/lib/pdf-generator.js');
-let pdfGenText = fs.readFileSync(pdfGenPath, 'utf8');
-
-if (!pdfGenText.includes('exportBlobCallback')) {
-    pdfGenText = pdfGenText.replace(
-        '// ── Generate & download ──',
-        `// ── Generate & download ──\n    if (data.exportBlobCallback) { return pdfMake.createPdf(docDefinition).getBlob((blob) => data.exportBlobCallback(blob)); }`
-    );
-    fs.writeFileSync(pdfGenPath, pdfGenText);
-    console.log('Patched pdf-generator.js');
+let qm = fs.readFileSync('src/lib/queue-manager.js', 'utf8');
+if (!qm.includes('cancelJob(jobId)')) {
+    qm = qm.replace('getGlobalQueueDepthMs() {', 'cancelJob(jobId) {\n        this.activeJobs.delete(jobId);\n        this.queue = this.queue.filter(j => j.jobId !== jobId);\n        this._notify();\n    }\n\n    getGlobalQueueDepthMs() {');
+    fs.writeFileSync('src/lib/queue-manager.js', qm);
 }
 
-// 2. Patch useAnalyze.js
-const useAnalyzePath = path.join(__dirname, 'src/hooks/useAnalyze.js');
-let useAnalyzeText = fs.readFileSync(useAnalyzePath, 'utf8');
-
-if (!useAnalyzeText.includes('overlayPDFReport')) {
-    const targetHook = `const { generatePDFReport } = await import("@/lib/pdf-generator");
-                            generatePDFReport({`;
-
-    const replacementHook = `const { generatePDFReport } = await import("@/lib/pdf-generator");
-                            const { overlayPDFReport } = await import("@/lib/pdf-overlay");
-                            if (scannedFile && scannedFile.type === 'application/pdf') {
-                                try {
-                                    const overlaySuccess = await overlayPDFReport({
-                                        file: scannedFile,
-                                        filename: scannedFile.name,
-                                        breakdown,
-                                        chunks: results,
-                                        sentenceCount: results.length,
-                                        wordCount: results.reduce((s, c) => s + c.text.trim().split(/\\s+/).length, 0)
-                                    });
-                                    if (overlaySuccess) return;
-                                } catch (err) { console.error(err); }
-                            }
-                            generatePDFReport({`;
-
-    useAnalyzeText = useAnalyzeText.replace(targetHook, replacementHook);
-    fs.writeFileSync(useAnalyzePath, useAnalyzeText);
-    console.log('Patched useAnalyze.js');
+let side = fs.readFileSync('src/components/QueueSidebar.jsx', 'utf8');
+if (!side.includes('cancelJob(job')) {
+    side = side.replace('return (', 'const handleCancel = (e, id) => { e.stopPropagation(); QueueManager.cancelJob(id); };\n                        return (');
+    side = side.replace('<div className="mt-2 h-1', '<button onClick={(e) => handleCancel(e, job.jobId)} className="absolute top-2 right-2 text-[9px] px-2 py-0.5 rounded border border-red-500/20 text-red-400 bg-red-500/10 hover:bg-red-500/20 transition-all font-bold">CANCEL</button>\n                            <div className="mt-2 h-1');
+    fs.writeFileSync('src/components/QueueSidebar.jsx', side);
 }
+console.log('Patch complete.');

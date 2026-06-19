@@ -48,6 +48,12 @@ class JotrilQueueManager {
         }
     }
 
+    cancelJob(jobId) {
+        this.activeJobs.delete(jobId);
+        this.queue = this.queue.filter(j => j.jobId !== jobId);
+        this._notify();
+    }
+
     getGlobalQueueDepthMs() {
         return (this.queue.length / this.MAX_CONCURRENCY) * this.estimatedLatencyMs;
     }

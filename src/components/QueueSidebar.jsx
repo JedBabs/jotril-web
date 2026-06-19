@@ -13,7 +13,8 @@ export default function QueueSidebar() {
             setJobs(payload.jobs);
         });
 
-        return () => unsubscribe();
+        const handleCancel = (e, id) => { e.stopPropagation(); QueueManager.cancelJob(id); };
+                        return () => unsubscribe();
     }, []);
 
     if (jobs.length === 0) return null;
