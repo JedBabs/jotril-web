@@ -143,6 +143,8 @@ class JotrilQueueManager {
                 if (droppedIndices.length > 0) {
                     console.log(`[Auto-Sweeper] Detected ${droppedIndices.length} drops! Injecting at Tier 999...`);
                     this.telemetry.sweeperRetries += droppedIndices.length;
+                    this.MAX_CONCURRENCY = Math.max(10, Math.floor(this.MAX_CONCURRENCY / 1.5));
+                    console.warn([Auto-Sweeper] Downscaling concurrency gracefully to: );
 
                     parentJob.completedChunks -= droppedIndices.length; // Rollback completion counter
 
@@ -171,6 +173,7 @@ class JotrilQueueManager {
 }
 
 export const QueueManager = new JotrilQueueManager();
+
 
 
 
