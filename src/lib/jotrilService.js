@@ -196,7 +196,7 @@ export async function queryJotrilBatch(texts, spaceName) {
     let retryCount = 0;
     while (retryCount <= MAX_RETRIES) {
         try {
-            const submitUrl = https://.hf.space/gradio_api/call/predict;
+            const submitUrl = `https://${spaceName.replace("/", "-")}.hf.space/gradio_api/call/predict`;
             const response = await secureFetch(submitUrl, {
                 method: "POST",
                 body: JSON.stringify({ data: [texts] })
