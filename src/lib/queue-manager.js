@@ -3,7 +3,7 @@
  * Coordinates all chunk processing natively utilizing a bounded concurrency pool
  * and priority preemption queues. Includes Auto-Sweeper and Telemetry Hooks.
  */
-import { queryJotrilModel, SPACES } from './jotrilService.js';
+import { queryJotrilModel, queryJotrilBatch, SPACES } from './jotrilService.js';
 
 class JotrilQueueManager {
     constructor() {
