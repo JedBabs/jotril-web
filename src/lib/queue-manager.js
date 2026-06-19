@@ -11,7 +11,7 @@ class JotrilQueueManager {
             this.queue = [];
             this.activeJobs = new Map();
             this.activeWorkers = 0;
-            this.MAX_CONCURRENCY = 10; // 10 simultaneous chunks
+            this.MAX_CONCURRENCY = 60; // 10 simultaneous chunks
             this.listeners = new Set();
             this.telemetry = {
                 processedChunks: 0,
@@ -21,7 +21,7 @@ class JotrilQueueManager {
             };
 
             // Expected latency per chunk (estimated 1500ms API round trip)
-            this.estimatedLatencyMs = 1500;
+            this.estimatedLatencyMs = 1200;
 
             JotrilQueueManager.instance = this;
         }
@@ -171,4 +171,7 @@ class JotrilQueueManager {
 }
 
 export const QueueManager = new JotrilQueueManager();
+
+
+
 
