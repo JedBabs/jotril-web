@@ -13,7 +13,7 @@ export const SPACES = [
 
 let currentIndex = 0;
 
-class JotrilServiceError extends Error {
+export class JotrilServiceError extends Error {
     constructor(message, type, retriable = false) {
         super(message);
         this.type = type;
@@ -188,4 +188,5 @@ export async function predictBatch(texts, onProgress = null, checkCancel = null,
     await Promise.all(workers);
     return results;
 }
+
 

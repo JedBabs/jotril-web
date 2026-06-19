@@ -20,7 +20,7 @@ import {
     splitIntoSentences,
     SIGNAL_CONFIG,
 } from './chunking';
-import { batchQueryModel } from './jotrilService';
+import { predictBatch } from './jotrilService';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. DATASET PREPARATION
@@ -119,7 +119,7 @@ export async function buildScoreCache(documents, onProgress, checkCancel = null)
     // Step 3: Unleash the fully unblocked continuous worker pool
     let rawResults = [];
     if (textsToQuery.length > 0) {
-        rawResults = await batchQueryModel(textsToQuery, 16, 0, checkCancel, (pct, msg) => {
+        rawResults = await predictBatch(textsToQuery, 16, 0, checkCancel, (pct, msg) => {
             onProgress?.(Math.min(99, pct), `Analyzing linguistic patterns: ${msg}`);
         });
     }
@@ -740,3 +740,4 @@ function cartesianProduct(ranges, maxCombos = 50000) {
 
     return result;
 }
+
