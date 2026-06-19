@@ -1,43 +1,44 @@
 {
-  "name": "jotril-web",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint",
-    "test": "node --import ./tests/setup.mjs --test tests/*.test.mjs",
-    "postinstall": "prisma generate"
-  },
-  "dependencies": {
-    "@auth/prisma-adapter": "^2.11.2",
-    "@gradio/client": "^2.2.0",
-    "@prisma/client": "^5.22.0",
-    "bcrypt": "^6.0.0",
-    "framer-motion": "^12.38.0",
-    "html-to-pdfmake": "^2.5.33",
-    "jspdf": "^4.2.1",
-    "jspdf-autotable": "^5.0.7",
-    "lucide-react": "^1.8.0",
-    "mammoth": "^1.12.0",
-    "next": "16.2.2",
-    "next-auth": "^4.24.13",
-    "next-themes": "^0.4.6",
-    "nodemailer": "^7.0.13",
-    "pdf-lib": "^1.17.1",
-    "pdf-parse": "^2.4.5",
-    "pdfjs-dist": "^3.11.174",
-    "pdfmake": "^0.3.8",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "dotenv": "^17.4.1",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.2",
-    "prisma": "^5.22.0",
-    "tailwindcss": "^4"
-  }
+    "name":  "jotril-web",
+    "version":  "0.1.0",
+    "private":  true,
+    "scripts":  {
+                    "dev":  "next dev",
+                    "build":  "next build",
+                    "start":  "next start",
+                    "lint":  "eslint",
+                    "test":  "node --import ./tests/setup.mjs --test tests/*.test.mjs",
+                    "postinstall":  "prisma generate",
+                    "deploy":  "npx vercel --prod --yes"
+                },
+    "dependencies":  {
+                         "@auth/prisma-adapter":  "^2.11.2",
+                         "@gradio/client":  "^2.2.0",
+                         "@prisma/client":  "^5.22.0",
+                         "bcrypt":  "^6.0.0",
+                         "framer-motion":  "^12.38.0",
+                         "html-to-pdfmake":  "^2.5.33",
+                         "jspdf":  "^4.2.1",
+                         "jspdf-autotable":  "^5.0.7",
+                         "lucide-react":  "^1.8.0",
+                         "mammoth":  "^1.12.0",
+                         "next":  "16.2.2",
+                         "next-auth":  "^4.24.13",
+                         "next-themes":  "^0.4.6",
+                         "nodemailer":  "^7.0.13",
+                         "pdf-lib":  "^1.17.1",
+                         "pdf-parse":  "^2.4.5",
+                         "pdfjs-dist":  "^3.11.174",
+                         "pdfmake":  "^0.3.8",
+                         "react":  "19.2.4",
+                         "react-dom":  "19.2.4"
+                     },
+    "devDependencies":  {
+                            "@tailwindcss/postcss":  "^4",
+                            "dotenv":  "^17.4.1",
+                            "eslint":  "^9",
+                            "eslint-config-next":  "16.2.2",
+                            "prisma":  "^5.22.0",
+                            "tailwindcss":  "^4"
+                        }
 }
