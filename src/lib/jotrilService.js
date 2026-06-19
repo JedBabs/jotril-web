@@ -49,7 +49,7 @@ export async function pingJotrilModels() {
 }
 
 /**
- * Executes a raw Gradio direct `/gradio_api/call/predict` endpoint for ultra-low latency.
+ * Executes a raw Gradio direct `/gradio_api/call/batch` endpoint for ultra-low latency.
  */
 export async function queryJotrilModel(text, spaceName) {
     const MAX_RETRIES = 5;
@@ -79,7 +79,7 @@ export async function queryJotrilModel(text, spaceName) {
 
             let result = null;
             let statusFailures = 0;
-            const statusUrl = `https://${spaceName.replace('/', '-')}.hf.space/gradio_api/call/predict/${eventId}`;
+            const statusUrl = `https://${spaceName.replace('/', '-')}.hf.space/gradio_api/call/batch/${eventId}`;
 
             while (statusFailures < 15) {
                 const statusRes = await secureFetch(statusUrl, { method: 'GET' });
@@ -196,7 +196,7 @@ export async function queryJotrilBatch(texts, spaceName) {
     let retryCount = 0;
     while (retryCount <= MAX_RETRIES) {
         try {
-            const submitUrl = `https://${spaceName.replace("/", "-")}.hf.space/gradio_api/call/predict`;
+            const submitUrl = `https://${spaceName.replace("/", "-")}.hf.space/gradio_api/call/batch`;
             const response = await secureFetch(submitUrl, {
                 method: "POST",
                 body: JSON.stringify({ data: [texts] })
