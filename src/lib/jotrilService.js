@@ -199,6 +199,7 @@ export async function queryJotrilBatch(texts, spaceName) {
             const submitUrl = `https://${spaceName.replace("/", "-")}.hf.space/gradio_api/call/batch`;
             const response = await secureFetch(submitUrl, {
                 method: "POST",
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ data: [texts] })
             });
             
