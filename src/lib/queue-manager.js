@@ -122,8 +122,6 @@ class JotrilQueueManager {
             if(batchWindow.length === 0) continue;
             const parentJob = this.activeJobs.get(batchWindow[0].jobId);
             const chunkJob = batchWindow[0];
-
-            const parentJob = this.activeJobs.get(chunkJob.jobId);
             if (!parentJob) continue;
 
             this.telemetry.edgeProxyCalls++; // Log every single invocation sent to proxy!
