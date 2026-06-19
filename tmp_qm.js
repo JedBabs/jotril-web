@@ -111,17 +111,7 @@ class JotrilQueueManager {
 
     async _runWorkerLoop() {
         while (this.queue.length > 0) {
-            if(this.queue.length === 0) break;
-            const batchWindow = [];
-            while(this.queue.length > 0 && batchWindow.length < 10) {
-                const peek = this.queue[0];
-                const p = this.activeJobs.get(peek.jobId);
-                if (!p) { this.queue.shift(); continue; }
-                batchWindow.push(this.queue.shift());
-            }
-            if(batchWindow.length === 0) continue;
-            const parentJob = this.activeJobs.get(batchWindow[0].jobId);
-            const chunkJob = batchWindow[0];
+            const chunkJob = this.queue.shift();
 
             const parentJob = this.activeJobs.get(chunkJob.jobId);
             if (!parentJob) continue;
@@ -130,9 +120,7 @@ class JotrilQueueManager {
 
             try {
                 const spaceName = SPACES[(chunkJob.chunkIndex) % SPACES.length];
-                const texts = batchWindow.map(c => c.chunkData.text);
-                const batchResults = await queryJotrilBatch(texts, spaceName);
-                const result = batchResults[0]; // just for variable mock
+                const result = await queryJotrilModel(chunkJob.chunkData.text, spaceName);
 
                 if (!result || result.error) throw new Error("Null or errored result from API");
 

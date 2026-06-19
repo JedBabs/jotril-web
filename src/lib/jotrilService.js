@@ -190,3 +190,40 @@ export async function predictBatch(texts, onProgress = null, checkCancel = null,
 }
 
 
+
+export async function queryJotrilBatch(texts, spaceName) {
+    const MAX_RETRIES = 5;
+    let retryCount = 0;
+    while (retryCount <= MAX_RETRIES) {
+        try {
+            const submitUrl = https://.hf.space/gradio_api/call/predict;
+            const response = await secureFetch(submitUrl, {
+                method: "POST",
+                body: JSON.stringify({ data: [texts] })
+            });
+            
+            const rawResponse = await response.text();
+            if (rawResponse.includes("error")) throw new Error("Batch API Error");
+            
+            // Assuming the API returns [ ["ai", 0.9], ["human", 0.1], ... ]
+            // or something similar when batched! We will just parse each result.
+            const eventIdMatch = rawResponse.match(/"event_id":"([^"]+)"/);
+            if (eventIdMatch) {
+               // Wait, the API sends event stream! 
+               const eventId = eventIdMatch[1];
+               const streamResp = await secureFetch(submitUrl + "/" + eventId, { method: "GET" });
+               const streamData = await streamResp.text();
+               const finalMatch = streamData.match(/event: complete\n*data: (.+)/);
+               if (finalMatch) { 
+                   const resultData = JSON.parse(finalMatch[1]);
+                   return resultData[0]; // Assuming Gradio returns 2D array [[results]]
+               }
+            }
+            throw new Error("Invalid batch parsing context");
+        } catch(e) {
+            retryCount++;
+            await new Promise(r => setTimeout(r, 1000));
+        }
+    }
+    throw new Error("Failed batch");
+}
