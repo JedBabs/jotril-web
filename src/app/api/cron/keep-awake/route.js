@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { queryJotrilModel } from '@/lib/jotrilService';
+import { queryJotrilModel, SPACES } from '@/lib/jotrilService';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,21 +18,10 @@ export async function GET(req) {
     try {
         console.log('⏰ [Keep-Awake] Starting space pings...');
 
-        // Use a short, simple text for the ping
+        // Use a short, simple text for the ping. A real inference request resets each
+        // Space's 48h sleep timer. SPACES is imported from jotrilService (single source
+        // of truth), so adding/removing a Space there keeps this cron in sync automatically.
         const pingText = "Is the engine active?";
-
-        // We want to ping BOTH spaces, so we'll bypass the random load balancer 
-        // by calling them specifically if we had that option, or just relying on multiple hits.
-        // However, since queryJotrilModel picks one, we'll try to hit it multiple times 
-        // or modify jotrilService to allow specific space targeting.
-
-        // Let's modify jotrilService to export SPACES or allow targeting. 
-        // (I already added preferredSpace to queryJotrilModel)
-
-        const SPACES = [
-            "JedBabs/Jotril-Space-1",
-            "JedBabs/Jotril-Space-2"
-        ];
 
         const results = await Promise.allSettled(
             SPACES.map(space => queryJotrilModel(pingText, space))

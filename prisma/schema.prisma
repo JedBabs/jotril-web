@@ -3,27 +3,27 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  emailVerified DateTime?
-  password  String?  // Optional for future-proofing OAuth, required for credentials
-  name      String?
-  role      String   @default("FREE") // Values: FREE, PRO, ULTRA, ADMIN
-  purchasedPoints  Int  @default(0)    // Bought points that never expire
-  
-  apiKeys   ApiKey[]
+  id              String    @id @default(uuid())
+  email           String    @unique
+  emailVerified   DateTime?
+  password        String? // Optional for future-proofing OAuth, required for credentials
+  name            String?
+  role            String    @default("FREE") // Values: FREE, PRO, ULTRA, ADMIN
+  purchasedPoints Int       @default(0) // Bought points that never expire
+
+  apiKeys     ApiKey[]
   quotaUsages QuotaUsage[]
   resetTokens PasswordResetToken[]
   accounts    Account[]
   sessions    Session[]
   scanResults ScanResult[]
-  
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -42,12 +42,12 @@ model ScanResult {
   userId        String
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   filename      String?
-  type          String   // 'TEXT' or 'DOCUMENT'
+  type          String // 'TEXT' or 'DOCUMENT'
   wordCount     Int
   sentenceCount Int
   overallLabel  String
-  breakdown     Json     // { human, mixed, ai }
-  chunks        Json     // The analyzed chunks
+  breakdown     Json // { human, mixed, ai }
+  chunks        Json // The analyzed chunks
   createdAt     DateTime @default(now())
 
   @@index([userId])
@@ -55,23 +55,23 @@ model ScanResult {
 }
 
 model AnalysisRequest {
-  id          String   @id @default(uuid())
-  hash        String   // Hardware Fingerprint Hash for rate limiting
-  textLength  Int
-  isPro       Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  id         String   @id @default(uuid())
+  hash       String // Hardware Fingerprint Hash for rate limiting
+  textLength Int
+  isPro      Boolean  @default(false)
+  createdAt  DateTime @default(now())
 
   @@index([hash])
 }
 
 model AccountLockout {
-  id             String   @id @default(uuid())
-  identifier     String   @unique // Email or IP Address
-  failedAttempts Int      @default(0)
+  id             String    @id @default(uuid())
+  identifier     String    @unique // Email or IP Address
+  failedAttempts Int       @default(0)
   lockedUntil    DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
   @@index([identifier])
 }
 
@@ -88,14 +88,14 @@ model PasswordResetToken {
 
 model QuotaUsage {
   id            String   @id @default(uuid())
-  userId        String?  // Null for unauthenticated users
+  userId        String? // Null for unauthenticated users
   user          User?    @relation(fields: [userId], references: [id])
-  hash          String?  // Hardware footprint hash
-  type          String   // 'TEXT' or 'DOCUMENT'
-  size          Int      // Characters or Bytes
-  pointsCost    Int      @default(0)  // Points consumed by this action
-  sentenceCount Int      @default(0)  // Number of sentences processed
-  textHash      String?  // SHA-256 of input text for result caching
+  hash          String? // Hardware footprint hash
+  type          String // 'TEXT' or 'DOCUMENT'
+  size          Int // Characters or Bytes
+  pointsCost    Int      @default(0) // Points consumed by this action
+  sentenceCount Int      @default(0) // Number of sentences processed
+  textHash      String? // SHA-256 of input text for result caching
   createdAt     DateTime @default(now())
 
   @@index([userId])
@@ -106,17 +106,31 @@ model QuotaUsage {
 
 model EngineConfig {
   id           String   @id @default("global")
-  data         Json     // Current active config
-  previousData Json?    // Snapshot before last change (for undo)
+  data         Json // Current active config
+  previousData Json? // Snapshot before last change (for undo)
   updatedAt    DateTime @updatedAt
 }
 
+// Tracks Vercel Function Invocations spent on the live detection path per month,
+// so the budget governor can pace full-engine scans against the plan's monthly
+// pool (Hobby = 1M/month; exhaustion PAUSES the whole deployment). One row per
+// UTC month. Reservation model: incremented at /api/analyze, reconciled at
+// /api/attribute — see src/lib/budget-governor.js.
+model UsageBudget {
+  month     String   @id // UTC "YYYY-MM"
+  used      Int      @default(0) // invocations reserved + consumed this month
+  todayUsed Int      @default(0) // invocations spent on the current UTC day (folds into ewmaDaily on rollover)
+  ewmaDaily Float    @default(0) // EWMA of daily invocations — the predictive run-rate
+  lastDay   Int      @default(0) // UTC day-of-month the EWMA was last rolled forward
+  updatedAt DateTime @updatedAt
+}
+
 model EmailVerificationToken {
-  id        String   @id @default(uuid())
-  token     String   @unique
-  identifier String  // Will hold the email address
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  id         String   @id @default(uuid())
+  token      String   @unique
+  identifier String // Will hold the email address
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
 
   @@index([token])
   @@index([identifier])
@@ -124,18 +138,18 @@ model EmailVerificationToken {
 
 // NextAuth Required Models for OAuth (Prisma Adapter)
 model Account {
-  id                 String  @id @default(cuid())
-  userId             String
-  type               String
-  provider           String
-  providerAccountId  String
-  refresh_token      String?  @db.Text
-  access_token       String?  @db.Text
-  expires_at         Int?
-  token_type         String?
-  scope              String?
-  id_token           String?  @db.Text
-  session_state      String?
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -153,30 +167,30 @@ model Session {
 // ── Auto-Tuning System ──────────────────────────────────────────────────
 
 model TuningDataset {
-  id          String   @id @default(uuid())
+  id          String      @id @default(uuid())
   name        String
-  samples     Json     // [{text, label, format?}] — raw labeled documents/sentences
+  samples     Json // [{text, label, format?}] — raw labeled documents/sentences
   sampleCount Int
-  scoreCache  Json?    // Cached model scores per document — populated on first run
-  createdAt   DateTime @default(now())
+  scoreCache  Json? // Cached model scores per document — populated on first run
+  createdAt   DateTime    @default(now())
   runs        TuningRun[]
 }
 
 model TuningRun {
-  id           String    @id @default(uuid())
+  id           String        @id @default(uuid())
   datasetId    String
   dataset      TuningDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
-  status       String    @default("PENDING") // PENDING | CACHING | TUNING | COMPLETE | FAILED
-  progress     Int       @default(0)         // 0-100
-  bestConfig   Json?     // The winning engine config
+  status       String        @default("PENDING") // PENDING | CACHING | TUNING | COMPLETE | FAILED
+  progress     Int           @default(0) // 0-100
+  bestConfig   Json? // The winning engine config
   bestAccuracy Float?
-  bestMcc      Float?    // Matthews Correlation Coefficient
-  metrics      Json?     // {precision, recall, f1, confusionMatrix, perClassMetrics}
-  trialCount   Int?      // Total configs evaluated
-  log          Json?     // Top N trial summaries [{config, accuracy, mcc}]
-  message      String?   // Current activity status (e.g. "Analyzing linguistic patterns...")
+  bestMcc      Float? // Matthews Correlation Coefficient
+  metrics      Json? // {precision, recall, f1, confusionMatrix, perClassMetrics}
+  trialCount   Int? // Total configs evaluated
+  log          Json? // Top N trial summaries [{config, accuracy, mcc}]
+  message      String? // Current activity status (e.g. "Analyzing linguistic patterns...")
   error        String?
-  createdAt    DateTime  @default(now())
+  createdAt    DateTime      @default(now())
   completedAt  DateTime?
 
   @@index([datasetId])

@@ -8,10 +8,24 @@
 // Target pools automatically synchronized
 export const SPACES = [
     'JedBabs/Jotril-Space-1',
-    'JedBabs/Jotril-Space-2'
+    'JedBabs/Jotril-Space-2',
+    'JedBabs/Jotril-Space-3'
 ];
 
 let currentIndex = 0;
+
+/**
+ * The HF model emits human-facing labels ("AI GENERATED" / "HUMAN WRITTEN").
+ * The heatmap pipeline (useAnalyze.processFinalResults) keys strictly off the
+ * canonical tokens "ai" / "human" / "mixed", so normalize at this boundary —
+ * otherwise every successful result silently falls through to "transparent".
+ */
+function normalizeLabel(raw) {
+    const s = String(raw).toUpperCase();
+    if (s.includes('HUMAN')) return 'human';
+    if (s.includes('AI')) return 'ai';
+    return 'mixed';
+}
 
 export class JotrilServiceError extends Error {
     constructor(message, type, retriable = false) {
@@ -22,9 +36,18 @@ export class JotrilServiceError extends Error {
 }
 
 /**
+ * Honest proxy-call tally. Each secureFetch = one real Vercel Function Invocation
+ * (submit OR poll), so this counts what `telemetry.edgeProxyCalls` used to under-count
+ * (it incremented once per query, ignoring the polls). Session-scoped display gauge —
+ * the authoritative monthly budget lives server-side in UsageBudget / budget-governor.js.
+ */
+export const proxyStats = { calls: 0 };
+
+/**
  * Proxy Wrapper fetching tool.
  */
 async function secureFetch(targetUrl, options) {
+    proxyStats.calls++;
     return fetch('/api/gradio-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -33,36 +56,54 @@ async function secureFetch(targetUrl, options) {
 }
 
 /**
- * Pings the model to ensure it's awake and ready.
+ * Keep-awake: warms EVERY Space so none sleeps after 48h idle.
+ *
+ * Important: a Hub status check (huggingface.co/api/spaces/...) does NOT reset a
+ * Space's inactivity timer — only a real request to its inference endpoint does.
+ * So we fire a lightweight submit at each Space's `/gradio_api/call/predict` and
+ * don't wait for the result (fire-and-forget): reaching the Space is enough to
+ * keep it warm, and we avoid blocking on a 30-60s cold-start (cron timeout safety).
  */
 export async function pingJotrilModels() {
-    console.log('[JotrilService] [SECURE] Pinging primary AI assessment nodes via Proxy...');
-    try {
-        const response = await secureFetch(`https://huggingface.co/api/spaces/${SPACES[0]}`, { method: 'GET' });
-        if (!response.ok) throw new Error('Space API unreachable via proxy');
-        const data = await response.json();
-        return data.runtime?.stage === 'RUNNING';
-    } catch (e) {
-        console.warn('[JotrilService] Ping execution failed natively:', e);
-        return false;
-    }
+    console.log(`[JotrilService] [SECURE] Warming ${SPACES.length} AI assessment nodes via Proxy...`);
+    const results = await Promise.allSettled(
+        SPACES.map(space => {
+            const submitUrl = `https://${space.replace('/', '-')}.hf.space/gradio_api/call/predict`;
+            return secureFetch(submitUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ data: ['warmup'] })
+            });
+        })
+    );
+    const reached = results.filter(r => r.status === 'fulfilled' && r.value?.ok).length;
+    console.log(`[JotrilService] Warmed ${reached}/${SPACES.length} Spaces.`);
+    return reached > 0;
 }
 
 /**
- * Executes a raw Gradio direct `/gradio_api/call/batch` endpoint for ultra-low latency.
+ * Submits one sentence to the Gradio `/gradio_api/call/predict` endpoint, then
+ * polls the matching `/gradio_api/call/predict/<event_id>` SSE stream for the result.
+ *
+ * `spaceName` is the *preferred* Space; on transport-level failures we rotate to the
+ * next Space in SPACES so a single dead/cold Space doesn't condemn the chunk. A 429
+ * (rate limit) keeps the same Space and just backs off — the others are likely as hot.
  */
 export async function queryJotrilModel(text, spaceName) {
     const MAX_RETRIES = 5;
     let retryCount = 0;
+    // Rotate starting from the caller's preferred Space, so retries fan out across the pool.
+    const startIdx = Math.max(0, SPACES.indexOf(spaceName));
+    let currentSpace = spaceName;
 
     while (retryCount <= MAX_RETRIES) {
         try {
-            const submitUrl = `https://${spaceName.replace('/', '-')}.hf.space/gradio_api/call/predict`;
+            const submitUrl = `https://${currentSpace.replace('/', '-')}.hf.space/gradio_api/call/predict`;
 
             const submitRes = await secureFetch(submitUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: { data: [text] } // proxy automatically stringifies inner body requests if configured
+                body: JSON.stringify({ data: [text] })
             });
 
             if (!submitRes.ok) {
@@ -78,9 +119,13 @@ export async function queryJotrilModel(text, spaceName) {
             if (!eventId) throw new Error('Invalid Gradio Proxy Response: Missing event_id');
 
             let result = null;
-            let statusFailures = 0;
-            const statusUrl = `https://${spaceName.replace('/', '-')}.hf.space/gradio_api/call/batch/${eventId}`;
+            // The poll URL MUST match the api_name used at submit time ("/predict").
+            // Polling "/batch/<eid>" for a /predict job only ever returns
+            // "event: heartbeat / data: null" and never resolves — the root cause of
+            // the recurring "Polling Timeout Extinguished" + resubmit loop.
+            const statusUrl = `https://${currentSpace.replace('/', '-')}.hf.space/gradio_api/call/predict/${eventId}`;
 
+            let statusFailures = 0;
             while (statusFailures < 15) {
                 const statusRes = await secureFetch(statusUrl, { method: 'GET' });
 
@@ -94,24 +139,49 @@ export async function queryJotrilModel(text, spaceName) {
                 }
 
                 const rawText = await statusRes.text();
-                const lines = rawText.split('\n').filter(l => l.startsWith('data: '));
 
+                // Gradio's /gradio_api/call/<api>/<event_id> endpoint streams SSE as
+                // alternating "event: <type>" / "data: <json>" line pairs. The payload
+                // on a "complete" event is the raw output array:
+                //   [ { label, confidences:[{label,confidence}] }, scorePct, aiProbability ]
+                // (NOT the old {"msg":"process_completed","output":...} queue protocol.)
+                const lines = rawText.split('\n');
+                let currentEvent = null;
                 for (const line of lines) {
-                    const dataStr = line.substring(6);
+                    if (line.startsWith('event:')) {
+                        currentEvent = line.slice(6).trim();
+                        continue;
+                    }
+                    if (!line.startsWith('data:')) continue;
+
+                    const dataStr = line.slice(5).trim();
+                    if (currentEvent === 'error') {
+                        throw new Error(`Gradio inference error via proxy: ${dataStr}`);
+                    }
+                    if (currentEvent !== 'complete') continue; // skip heartbeat / generating
+
+                    let payload;
                     try {
-                        const data = JSON.parse(dataStr);
-                        if (data.msg === 'process_starts' || data.msg === 'process_generating') {
-                            continue; // Valid heartbeat ping
-                        }
-                        if (data.msg === 'process_completed') {
-                            // Extract prediction and confidence metrics
-                            const p = data.output.data[0];
-                            result = p.label ? { label: p.label.toLowerCase(), confidence: p.confidences[0]?.confidence || 1.0 } : p[0];
-                        } else {
-                            throw new Error(`Gradio generation error via proxy: ${dataStr}`);
-                        }
+                        payload = JSON.parse(dataStr);
                     } catch (e) {
-                        // Some data streams represent chunk breakage; gracefully continue
+                        continue; // truncated/partial frame — keep scanning
+                    }
+
+                    const head = Array.isArray(payload) ? payload[0] : payload;
+                    if (head && head.label != null) {
+                        // The site's source of truth is the AI probability (0-1); the engine
+                        // thresholds (humanMax/mixedMax) later turn it into ai/mixed/human.
+                        // payload[2] is the model's "AI Probability Meter"; fall back to the
+                        // AI entry inside `confidences` if the array shape differs.
+                        const aiProbability = Array.isArray(payload) && typeof payload[2] === 'number'
+                            ? payload[2]
+                            : head.confidences?.find(c => /ai/i.test(String(c.label)))?.confidence ?? null;
+                        result = {
+                            score: aiProbability != null ? Math.round(aiProbability * 100) : null, // 0-100 AI score
+                            aiProbability,
+                            confidence: head.confidences?.[0]?.confidence ?? 1.0,
+                            rawLabel: normalizeLabel(head.label) // fallback label only if score is unavailable
+                        };
                     }
                 }
 
@@ -124,22 +194,29 @@ export async function queryJotrilModel(text, spaceName) {
             return {
                 text,
                 ...result,
-                sourceSpace: spaceName
+                sourceSpace: currentSpace
             };
 
         } catch (error) {
-            if (error instanceof JotrilServiceError) {
-                if (error.type === 'RATE_LIMIT') {
-                    retryCount++;
-                    const delay = Math.min(2000 * Math.pow(1.5, retryCount), 10000);
-                    console.log(`[JotrilProxyService] Space ${spaceName} dynamically rate limited. Retreating for ${delay}ms...`);
-                    await new Promise(r => setTimeout(r, delay));
-                    continue; // Retrying gracefully 
-                }
+            // 429 = rate limit on this Space. Rotating doesn't help (others share the
+            // same HF user quota), so stay put and just back off.
+            if (error instanceof JotrilServiceError && error.type === 'RATE_LIMIT') {
+                retryCount++;
+                const delay = Math.min(2000 * Math.pow(1.5, retryCount), 10000);
+                console.log(`[JotrilProxyService] Space ${currentSpace} rate limited. Retreating for ${delay}ms...`);
+                await new Promise(r => setTimeout(r, delay));
+                continue;
             }
-            // Unexpected standard errors map to cold-start retries
+            // Everything else (cold start, 5xx, polling timeout, network) = THIS Space is
+            // probably unhealthy. Rotate to the next Space in the pool for the retry — a
+            // dead Space-N can't condemn the chunk while Space-{N+1} is healthy.
             retryCount++;
-            if (retryCount > MAX_RETRIES) throw new Error(`Query failed continuously on secure proxy setup.`);
+            if (retryCount > MAX_RETRIES) {
+                throw new Error(`Query failed across all Spaces after ${MAX_RETRIES} attempts: ${error.message}`);
+            }
+            const nextSpace = SPACES[(startIdx + retryCount) % SPACES.length];
+            console.warn(`[JotrilProxyService] ${currentSpace} failed (${error.message}); failing over to ${nextSpace} (attempt ${retryCount}/${MAX_RETRIES})`);
+            currentSpace = nextSpace;
             await new Promise(r => setTimeout(r, 1000));
         }
     }

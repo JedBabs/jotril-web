@@ -53,3 +53,44 @@ export async function GET(req) {
         return NextResponse.json({ error: 'Failed to fetch scan results' }, { status: 500 });
     }
 }
+
+/**
+ * POST /api/scan-results
+ * Persists a completed scan for the authenticated user (enables history + PDF download).
+ * Guests are silently rejected (401) — useAnalyze fires this best-effort and ignores it.
+ */
+export async function POST(req) {
+    try {
+        const session = await getServerSession(authOptions);
+        if (!session?.user?.id) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const body = await req.json();
+        const { filename, type, wordCount, sentenceCount, overallLabel, breakdown, chunks } = body;
+
+        if (!Array.isArray(chunks) || chunks.length === 0 || !overallLabel) {
+            return NextResponse.json({ error: 'Invalid scan payload' }, { status: 400 });
+        }
+
+        const prisma = getPrisma();
+        const saved = await prisma.scanResult.create({
+            data: {
+                userId: session.user.id,
+                filename: filename || 'Pasted Text',
+                type: type === 'DOCUMENT' ? 'DOCUMENT' : 'TEXT',
+                wordCount: Number(wordCount) || 0,
+                sentenceCount: Number(sentenceCount) || chunks.length,
+                overallLabel,
+                breakdown: breakdown || {},
+                chunks, // full per-sentence chunks — needed to regenerate the PDF report
+            },
+            select: { id: true, createdAt: true },
+        });
+
+        return NextResponse.json({ id: saved.id, createdAt: saved.createdAt });
+    } catch (error) {
+        console.error('[ScanResults] Error saving:', error);
+        return NextResponse.json({ error: 'Failed to save scan result' }, { status: 500 });
+    }
+}

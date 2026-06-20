@@ -25,19 +25,22 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
         setSourceHtml(null);
     }, []);
 
-    const processFinalResults = useCallback((finalResults, html = null, file = null) => {
+    const processFinalResults = useCallback((finalChunks, html = null, file = null) => {
         setScannedFile(file);
         setSourceHtml(html);
 
-        // Map heatmap colors securely
-        const computedResults = finalResults.map(r => {
-            if (!r) return { text: "Error", label: "human", bgColor: "transparent" };
+        // finalChunks come pre-classified from /api/attribute (the server ran the full
+        // engine: attribution → smoothing → threshold banding). We just paint colors.
+        const computedResults = (finalChunks || []).map(r => {
+            if (!r) return { text: "Error", label: "human", bgColor: "transparent", para: 0 };
+            const label = r.label || "human";
             return {
                 text: r.text,
-                label: r.label,
-                confidence: r.confidence,
-                bgColor: r.label === "ai" ? "rgba(239, 68, 68, 0.45)" :
-                    r.label === "mixed" ? "rgba(245, 158, 11, 0.35)" : "transparent"
+                label,
+                score: r.score,
+                para: r.para ?? 0, // source paragraph index — preserves original spacing in the heatmap
+                bgColor: label === "ai" ? "rgba(239, 68, 68, 0.45)" :
+                    label === "mixed" ? "rgba(245, 158, 11, 0.35)" : "transparent"
             }
         });
 
@@ -50,13 +53,34 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
         const pMixed = ((mixedCount / total) * 100).toFixed(1);
         const pHuman = ((humanCount / total) * 100).toFixed(1);
 
-        setBreakdown({ human: pHuman, mixed: pMixed, ai: pAI });
+        const breakdown = { human: pHuman, mixed: pMixed, ai: pAI };
+        setBreakdown(breakdown);
 
-        if (aiCount > 0 && aiCount >= mixedCount) setOverallLabel("AI Generated");
-        else if (aiCount > 0 || mixedCount > 0) setOverallLabel("Mixed Content");
-        else setOverallLabel("Human Authored");
+        const ovl = (aiCount > 0 && aiCount >= mixedCount) ? "AI Generated"
+            : (aiCount > 0 || mixedCount > 0) ? "Mixed Content"
+            : "Human Authored";
+        setOverallLabel(ovl);
 
         setResults(computedResults);
+
+        // Persist the scan for logged-in users (history + PDF download). Best-effort and
+        // fire-and-forget: guests get a silent 401, and a save failure never blocks the UI.
+        try {
+            const wordCount = computedResults.reduce((n, r) => n + (r.text ? r.text.trim().split(/\s+/).filter(Boolean).length : 0), 0);
+            fetch("/api/scan-results", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    filename: file?.name || "Pasted Text",
+                    type: file ? "DOCUMENT" : "TEXT",
+                    wordCount,
+                    sentenceCount: computedResults.length,
+                    overallLabel: ovl,
+                    breakdown,
+                    chunks: computedResults.map(r => ({ text: r.text, label: r.label, score: r.score, para: r.para })),
+                })
+            }).catch(() => { /* offline / guest — ignore */ });
+        } catch { /* ignore persistence errors */ }
 
         if (onAfterComplete) onAfterComplete();
     }, [onAfterComplete]);
@@ -87,12 +111,13 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
             }
 
             const data = await res.json();
-            const { chunks, sourceHtml: html, chunkCount } = data;
+            const { scenarios, sentences, sourceHtml: html, chunkCount, depth, estimate, monthKey, callsPerQuery } = data;
 
-            // Optional Security: Map HF_TOKEN explicitly into safe proxy
-            // No prediction loops on server anymore.
+            // The full engine queries multi-scale WINDOWS (scenarios), not raw sentences.
+            // uniqueTexts are already deduped server-side (scenarios carry unique texts).
+            const uniqueTexts = scenarios.map(s => s.text);
 
-            updateProcess(10, `Queueing ${chunkCount} chunks...`);
+            updateProcess(10, `Queueing ${chunkCount} windows (${depth} depth)...`);
 
             // ETA Optimization logic
             const timePerChunk = 1000; // Match QueueManager.safeSwitchTPS statically
@@ -110,12 +135,38 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
                 updateProcess(15, `Scanning with expected delay: ${Math.round(etaMs / 1000)}s...`);
             }
 
-            // Bind Global Queue Lifecycle Execution Event
-            QueueManager.enqueueJob(file || { name: 'Pasted Text' }, chunks.map(c => ({ text: c })), userTier, (finalResults) => {
-                if (!isBackgroundHandled) closeProcess();
-                else showToast(`Background Verification Complete for ${file ? file.name : 'Pasting'}`, 'success');
+            // Bind Global Queue Lifecycle Execution Event. Results are parallel to
+            // uniqueTexts (== scenarios), so scores map straight back by index.
+            QueueManager.enqueueJob(file || { name: 'Pasted Text' }, uniqueTexts.map(t => ({ text: t })), userTier, async (windowResults) => {
+                try {
+                    if (!isBackgroundHandled) updateProcess(85, "Attributing sentence scores...");
 
-                processFinalResults(finalResults, html, file);
+                    const scores = windowResults.map(r => (r && typeof r.aiProbability === 'number') ? r.aiProbability : null);
+                    const executedQueries = scores.filter(s => s != null).length;
+
+                    // Run the full attribution engine server-side (needs EngineConfig/Prisma).
+                    const attrRes = await fetch("/api/attribute", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ sentences, scenarios, scores, estimate, monthKey, callsPerQuery, executedQueries })
+                    });
+
+                    if (!attrRes.ok) {
+                        const err = await attrRes.json().catch(() => ({}));
+                        throw new Error(err.error || `Attribution failed (${attrRes.status})`);
+                    }
+
+                    const { chunks } = await attrRes.json();
+
+                    if (!isBackgroundHandled) closeProcess();
+                    else showToast(`Background Verification Complete for ${file ? file.name : 'Pasting'}`, 'success');
+
+                    processFinalResults(chunks, html, file);
+                } catch (e) {
+                    console.error("Attribution stage failed:", e);
+                    showToast("Scoring engine failed to attribute results.", "error");
+                    closeProcess();
+                }
             });
 
         } catch (error) {

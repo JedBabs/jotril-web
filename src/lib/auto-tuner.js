@@ -181,12 +181,24 @@ export async function buildScoreCache(documents, onProgress, checkCancel = null)
  * Runs the full post-model pipeline with a candidate config against cached scores.
  * Returns classification metrics vs ground truth.
  */
-export function evaluateConfig(cache, candidateConfig) {
-    const predictions = [];
-    const truths = [];
+// How hard to discourage "mixed" labels in the objective. Higher = tighter mixed
+// margins (more decisive ai/human). NOT in PARAM_SPACE — tuning the penalty that
+// defines the objective would be circular (it'd just drive itself to 0).
+export const DEFAULT_MIXED_PENALTY = 0.30;
+
+export function evaluateConfig(cache, candidateConfig, mixedPenalty = DEFAULT_MIXED_PENALTY) {
+    // Synthetic docs are SAME-LABEL stitched (every sentence in a doc shares the doc's
+    // true label), so each sentence is a labeled data point. Scoring per-sentence gives
+    // ~5x more signal than the old doc-level binary AND measures exactly what the heatmap
+    // shows. Objective = balancedAccuracy − mixedPenalty × mixedFraction:
+    //   • balancedAccuracy = (aiRecall + humanRecall)/2 → rewards correct ai AND human equally
+    //   • mixed never matches a true label, so it already lowers recall; the penalty adds
+    //     explicit pressure for tighter mixed margins.
+    let aiCorrect = 0, aiTotal = 0, humanCorrect = 0, humanTotal = 0, mixedCount = 0, sentTotal = 0;
+    const docPredictions = [];
+    const docTruths = [];
 
     for (const doc of cache) {
-        // Build the engine config shape expected by the pipeline
         const engineCfg = {
             direct: { weight: candidateConfig.signalWeights.direct },
             differential: { weight: candidateConfig.signalWeights.differential },
@@ -198,21 +210,52 @@ export function evaluateConfig(cache, candidateConfig) {
             burstiness: candidateConfig.burstiness,
         };
 
-        // Run the attribution pipeline
         const burstinessNudge = calculateBurstinessNudge(doc.sentences, engineCfg);
         const rawChunks = attributeScoresToSentences(
             doc.sentences, doc.scenarios, doc.scores, burstinessNudge, engineCfg, doc.sentenceToScenarioMap
         );
         const smoothedChunks = contextualSmooth(rawChunks, engineCfg);
-        const { breakdown, overallLabel } = classifyResults(smoothedChunks, engineCfg);
+        const { chunks, breakdown } = classifyResults(smoothedChunks, engineCfg);
 
-        // Convert to binary classification
-        const predictedLabel = breakdown.ai >= 50 ? 'ai' : 'human';
-        predictions.push(predictedLabel);
-        truths.push(doc.label);
+        const truth = doc.label; // 'ai' | 'human' — true for EVERY sentence in this doc
+        for (const c of chunks) {
+            sentTotal++;
+            if (c.label === 'mixed') mixedCount++;
+            if (truth === 'ai') { aiTotal++; if (c.label === 'ai') aiCorrect++; }
+            else { humanTotal++; if (c.label === 'human') humanCorrect++; }
+        }
+
+        // Doc-level binary kept only for back-compat reporting (bestMcc/accuracy display).
+        docPredictions.push(breakdown.ai >= 50 ? 'ai' : 'human');
+        docTruths.push(truth);
     }
 
-    return computeMetrics(predictions, truths);
+    const aiRecall = aiTotal > 0 ? aiCorrect / aiTotal : 0;
+    const humanRecall = humanTotal > 0 ? humanCorrect / humanTotal : 0;
+    const balancedAccuracy = (aiRecall + humanRecall) / 2;
+    const mixedFraction = sentTotal > 0 ? mixedCount / sentTotal : 0;
+    const objective = balancedAccuracy - mixedPenalty * mixedFraction;
+
+    const docMetrics = computeMetrics(docPredictions, docTruths);
+
+    return {
+        // ── Primary optimization target ──
+        objective: Math.round(objective * 10000) / 10000,
+        // ── Sentence-level diagnostics (what the heatmap reflects) ──
+        balancedAccuracy: Math.round(balancedAccuracy * 10000) / 100, // %
+        aiRecall: Math.round(aiRecall * 10000) / 100,                 // %
+        humanRecall: Math.round(humanRecall * 10000) / 100,           // %
+        mixedFraction: Math.round(mixedFraction * 10000) / 100,       // %
+        sentenceTotal: sentTotal,
+        // ── Doc-level binary (legacy reference) ──
+        mcc: docMetrics.mcc,
+        accuracy: docMetrics.accuracy,
+        precision: docMetrics.precision,
+        recall: docMetrics.recall,
+        f1: docMetrics.f1,
+        confusionMatrix: docMetrics.confusionMatrix,
+        total: docMetrics.total,
+    };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -271,9 +314,11 @@ const PARAM_SPACE = {
     'signalWeights.differential': { min: 0.20, max: 0.60, coarseStep: 0.15, fineStep: 0.02 },
     'signalWeights.anchor': { min: 0.10, max: 0.40, coarseStep: 0.10, fineStep: 0.02 },
 
-    // Classification thresholds
-    'classification.humanMax': { min: 40, max: 80, coarseStep: 10, fineStep: 2 },
-    'classification.mixedMax': { min: 60, max: 90, coarseStep: 10, fineStep: 2 },
+    // Classification thresholds. Mixed band tightened (mixedMax max 90→80, humanMax
+    // max 80→78) to bias toward narrower mixed margins; the objective's mixed penalty
+    // does the rest. A narrow humanMax..mixedMax gap = fewer "mixed" sentences.
+    'classification.humanMax': { min: 40, max: 78, coarseStep: 10, fineStep: 2 },
+    'classification.mixedMax': { min: 60, max: 80, coarseStep: 8, fineStep: 2 },
 
     // Smoothing
     'smoothing.maxNudge': { min: 5, max: 45, coarseStep: 10, fineStep: 2 },
@@ -439,7 +484,7 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
     // Use trainCache for grid search optimization
     let bestConfig = getBaseConfig();
     let bestMetrics = evaluateConfig(trainCache, bestConfig);
-    let bestScore = bestMetrics.mcc;
+    let bestScore = bestMetrics.objective; // optimize the sentence-level objective, not doc-MCC
     let totalTrials = 0;
     const topTrials = []; // Keep top 20
 
@@ -453,19 +498,22 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
 
     function recordTrial(config, metrics) {
         totalTrials++;
-        if (metrics.mcc > bestScore) {
-            bestScore = metrics.mcc;
+        if (metrics.objective > bestScore) {
+            bestScore = metrics.objective;
             bestConfig = cloneConfig(config);
             bestMetrics = { ...metrics };
         }
-        // Track top 20
+        // Track top 20 by the optimization objective
         topTrials.push({
             config: cloneConfig(config),
+            objective: metrics.objective,
+            balancedAccuracy: metrics.balancedAccuracy,
+            mixedFraction: metrics.mixedFraction,
             accuracy: metrics.accuracy,
             mcc: metrics.mcc,
         });
         if (topTrials.length > 20) {
-            topTrials.sort((a, b) => b.mcc - a.mcc);
+            topTrials.sort((a, b) => b.objective - a.objective);
             topTrials.length = 20;
         }
     }
@@ -677,7 +725,7 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
     }
 
     // Sort final top trials
-    topTrials.sort((a, b) => b.mcc - a.mcc);
+    topTrials.sort((a, b) => b.objective - a.objective);
 
     // ── Final Validation: evaluate best config on held-out test set ────
     const trainMetrics = evaluateConfig(trainCache, bestConfig);

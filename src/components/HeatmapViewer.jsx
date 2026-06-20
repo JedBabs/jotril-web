@@ -8,7 +8,7 @@ const labelConfig = {
     ai: { bg: "bg-score-ai/45", hover: "hover:bg-score-ai/60", dot: "bg-score-ai", text: "AI Generated", glow: "shadow-[0_0_12px_rgba(239,68,68,0.6)]" },
 };
 
-export default function HeatmapViewer({ chunks, devMode = false }) {
+export default function HeatmapViewer({ chunks, devMode = false, previewLimit = 100, previewSentences = 40 }) {
     const [hoveredChunk, setHoveredChunk] = useState(null);
     const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
@@ -29,6 +29,24 @@ export default function HeatmapViewer({ chunks, devMode = false }) {
     const mixedCount = chunks.filter(c => c.label === 'mixed').length;
     const aiCount = chunks.filter(c => c.label === 'ai').length;
 
+    // For long documents, render only a leading preview inline and direct the user to the
+    // full PDF report (the heatmap of thousands of spans is slow and unwieldy on-screen).
+    const truncated = chunks.length > previewLimit;
+    const visibleChunks = truncated ? chunks.slice(0, previewSentences) : chunks;
+
+    // Group consecutive chunks by their source paragraph so the original spacing/structure
+    // is preserved (chunk.para = paragraph index from the engine; falls back to one block).
+    const paragraphs = [];
+    let currentPara = null;
+    visibleChunks.forEach((chunk, i) => {
+        const p = chunk.para ?? 0;
+        if (!currentPara || currentPara.para !== p) {
+            currentPara = { para: p, items: [] };
+            paragraphs.push(currentPara);
+        }
+        currentPara.items.push({ chunk, i });
+    });
+
     return (
         <div className="space-y-5">
             {/* Legend Bar */}
@@ -46,27 +64,31 @@ export default function HeatmapViewer({ chunks, devMode = false }) {
                 ))}
             </div>
 
-            {/* Heatmap Text Body */}
+            {/* Heatmap Text Body — grouped into paragraphs to preserve original spacing */}
             <div className="relative heatmap-container p-6 md:p-8 glass-card !rounded-2xl leading-[2] text-[15px] font-normal text-navy">
-                {chunks.map((chunk, i) => {
-                    const config = labelConfig[chunk.label] || labelConfig.mixed;
-                    return (
-                        <motion.span
-                            key={i}
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            transition={{ delay: Math.min(i * 0.02, 1) }}
-                            className={`px-0.5 mx-0.5 rounded-md cursor-pointer transition-all duration-150 inline ${hoveredChunk === chunk
-                                ? `bg-accent-blue/20 text-navy ring-1 ring-accent-blue/30 ${config.glow}`
-                                : `${config.bg} ${config.hover}`
-                                }`}
-                            onMouseMove={(e) => handleMouseMove(e, chunk)}
-                            onMouseLeave={() => setHoveredChunk(null)}
-                        >
-                            {chunk.text}
-                        </motion.span>
-                    );
-                })}
+                {paragraphs.map((para, pi) => (
+                    <p key={pi} className="mb-4 last:mb-0">
+                        {para.items.map(({ chunk, i }) => {
+                            const config = labelConfig[chunk.label] || labelConfig.mixed;
+                            return (
+                                <motion.span
+                                    key={i}
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    transition={{ delay: Math.min(i * 0.02, 1) }}
+                                    className={`px-0.5 mx-0.5 rounded-md cursor-pointer transition-all duration-150 inline ${hoveredChunk === chunk
+                                        ? `bg-accent-blue/20 text-navy ring-1 ring-accent-blue/30 ${config.glow}`
+                                        : `${config.bg} ${config.hover}`
+                                        }`}
+                                    onMouseMove={(e) => handleMouseMove(e, chunk)}
+                                    onMouseLeave={() => setHoveredChunk(null)}
+                                >
+                                    {chunk.text}
+                                </motion.span>
+                            );
+                        })}
+                    </p>
+                ))}
 
                 {/* Glassmorphism Tooltip */}
                 <AnimatePresence>
@@ -104,6 +126,21 @@ export default function HeatmapViewer({ chunks, devMode = false }) {
                     )}
                 </AnimatePresence>
             </div>
+
+            {/* Long-document notice — full heatmap lives in the PDF report */}
+            {truncated && (
+                <div className="flex items-start gap-3 px-5 py-4 glass-card !rounded-xl border border-accent-blue/30">
+                    <svg className="w-5 h-5 mt-0.5 shrink-0 text-accent-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <p className="text-sm text-navy">
+                        This document has <span className="font-bold">{chunks.length}</span> sentences — showing the first{' '}
+                        <span className="font-bold">{visibleChunks.length}</span> here for readability. Use the{' '}
+                        <span className="font-bold">Download PDF Report</span> button above to view the complete
+                        sentence-by-sentence heatmap.
+                    </p>
+                </div>
+            )}
         </div>
     );
 }

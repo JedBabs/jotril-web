@@ -49,7 +49,25 @@ export function splitIntoSentences(text) {
  * @param {string} paragraph - A single paragraph of text
  * @returns {Array<{text: string, type: string, sentenceIndices: number[]}>}
  */
-export function generateSentenceCombinations(paragraph) {
+/**
+ * Analysis depth profiles — the budget governor selects one per scan to trade
+ * accuracy against model-query (Vercel invocation) cost. See budget-governor.js.
+ *
+ * - full    : every scale + leave-one-out + paragraph. Highest accuracy, ~10-12x cost.
+ *             What the auto-tuner optimizes against (PRO+ / beta default).
+ * - reduced : 1-3 sentence windows + paragraph anchor, no leave-one-out. Keeps the
+ *             anchor + smoothing + most of the differential signal at ~1/3 the cost.
+ *             FREE-tier default; PRO falls back here under budget pressure.
+ * - minimal : single-sentence windows only (~1x cost). The budget floor / huge-doc
+ *             fallback — degrades to near the raw per-sentence score.
+ */
+export const DEPTH_PROFILES = {
+    full: { maxWindow: 5, leaveOneOut: true, includeParagraph: true },
+    reduced: { maxWindow: 3, leaveOneOut: false, includeParagraph: true },
+    minimal: { maxWindow: 1, leaveOneOut: false, includeParagraph: false },
+};
+
+export function generateSentenceCombinations(paragraph, depth = 'full') {
     const sentences = splitIntoSentences(paragraph);
 
     if (sentences.length === 0) {
@@ -61,10 +79,11 @@ export function generateSentenceCombinations(paragraph) {
         return [];
     }
 
+    const profile = DEPTH_PROFILES[depth] || DEPTH_PROFILES.full;
     const combinations = [];
 
-    // Sliding sentence windows (1 through min(5, n) sentences)
-    const maxWindow = Math.min(5, sentences.length);
+    // Sliding sentence windows (1 through min(profile.maxWindow, n) sentences)
+    const maxWindow = Math.min(profile.maxWindow, sentences.length);
     for (let windowSize = 1; windowSize <= maxWindow; windowSize++) {
         for (let i = 0; i <= sentences.length - windowSize; i++) {
             const windowSentences = sentences.slice(i, i + windowSize);
@@ -78,7 +97,7 @@ export function generateSentenceCombinations(paragraph) {
     }
 
     // Full paragraph baseline (only if different from what we already have)
-    if (sentences.length > maxWindow) {
+    if (profile.includeParagraph && sentences.length > maxWindow) {
         combinations.push({
             text: paragraph,
             type: 'paragraph',
@@ -88,7 +107,7 @@ export function generateSentenceCombinations(paragraph) {
 
     // Leave-One-Out Perturbation windows (Context stripping)
     // We send the paragraph minus exactly one sentence to measure the exact contextual drop.
-    if (sentences.length > 2) {
+    if (profile.leaveOneOut && sentences.length > 2) {
         for (let i = 0; i < sentences.length; i++) {
             const indices = [];
             const textParts = [];
@@ -178,7 +197,7 @@ export function applySmartCap(combinations, totalSentences) {
  *   totalSentences: number
  * }}
  */
-export function generateAnalysisScenarios(text) {
+export function generateAnalysisScenarios(text, depth = 'full') {
     const paragraphs = splitIntoParagraphs(text);
     const allSentences = [];
     const allScenarios = [];
@@ -190,7 +209,7 @@ export function generateAnalysisScenarios(text) {
         const paragraphSentences = splitIntoSentences(paragraph);
         allSentences.push(...paragraphSentences);
 
-        const combinations = generateSentenceCombinations(paragraph);
+        const combinations = generateSentenceCombinations(paragraph, depth);
 
         // Offset sentence indices to be document-global
         for (const combo of combinations) {
@@ -261,6 +280,21 @@ export const SIGNAL_CONFIG = {
     anchorThreshold: 0.85,
 };
 
+// ── Budget Governor defaults ─────────────────────────────────────────
+// Paces full-engine live scans against the Vercel monthly invocation pool.
+// Admin-tunable via EngineConfig.data.budget. See src/lib/budget-governor.js.
+// CURRENT PLAN: Vercel Hobby (free) = 1,000,000 invocations/MONTH (pool, not daily;
+// exhaustion pauses the whole deployment). reservePct protects non-detection traffic.
+// On upgrade to Pro: raise monthlyInvocations / lower reservePct / set tierDepth.FREE.
+export const DEFAULT_BUDGET_CONFIG = {
+    monthlyInvocations: 1_000_000, // Hobby pool
+    reservePct: 0.25,              // protect 25% for auth/dashboard/etc (a pause kills the WHOLE site)
+    callsPerQuery: 2,              // each model query = 1 submit + ~1 poll proxy call
+    ewmaAlpha: 0.5,                // responsiveness of the predictive daily run-rate
+    // tier → max analysis depth. Beta: comp testers to PRO/BETA for `full`.
+    tierDepth: { FREE: 'reduced', PRO: 'full', ULTRA: 'full', ADMIN: 'full', BETA: 'full' },
+};
+
 // ── Dynamic Engine Config ────────────────────────────────────────────
 // Reads from the EngineConfig table (set via Admin Hub), merging with defaults.
 // Falls back gracefully to hardcoded SIGNAL_CONFIG if no DB row exists.
@@ -297,6 +331,7 @@ export async function getEngineConfig() {
                     lowNudge: db.burstiness?.lowNudge ?? 5,
                     highNudge: db.burstiness?.highNudge ?? 10,
                 },
+                budget: { ...DEFAULT_BUDGET_CONFIG, ...(db.budget || {}), tierDepth: { ...DEFAULT_BUDGET_CONFIG.tierDepth, ...(db.budget?.tierDepth || {}) } },
             };
             _cacheTime = now;
             return _cachedConfig;
@@ -311,6 +346,7 @@ export async function getEngineConfig() {
         classification: { humanMax: 62, mixedMax: 75 },
         smoothing: { maxNudge: 25 },
         burstiness: { lowThreshold: 7, highThreshold: 12, lowNudge: 5, highNudge: 10 },
+        budget: { ...DEFAULT_BUDGET_CONFIG },
     };
     _cacheTime = now;
     return _cachedConfig;

@@ -1,7 +1,9 @@
 export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
-import { splitIntoSentences } from '@/lib/chunking';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '../auth/[...nextauth]/route';
 import { extractTextFromDocument, extractHtmlFromDocument } from '@/lib/file-parser';
+import { resolveScan } from '@/lib/budget-governor';
 
 export async function POST(req) {
     try {
@@ -22,14 +24,28 @@ export async function POST(req) {
             return NextResponse.json({ error: "No parsable text found in payload" }, { status: 400 });
         }
 
-        // Chunking architecture decoupled from processing execution layer
-        const sentences = splitIntoSentences(text);
+        // Resolve the user's tier server-side (never trust a client-supplied tier for
+        // budget depth). The governor decides analysis depth, generates the multi-scale
+        // scenarios, and reserves the estimated invocation budget.
+        const session = await getServerSession(authOptions);
+        const tier = session?.user?.role || 'UNAUTHENTICATED';
+
+        const plan = await resolveScan({ tier, text });
 
         return NextResponse.json({
-            chunks: sentences,
-            sourceHtml: sourceHtml,
+            // The multi-scale windows the client must query (full text retained — the
+            // client derives uniqueTexts = scenarios.map(s => s.text) and the attribution
+            // step needs text for the short-window confidence penalty).
+            scenarios: plan.scenarios,
+            sentences: plan.sentences,
+            sourceHtml,
             filename: fileName,
-            chunkCount: sentences.length
+            chunkCount: plan.scenarios.length,
+            // Budget bookkeeping — round-tripped back to /api/attribute for reconciliation.
+            depth: plan.depth,
+            estimate: plan.estimate,
+            monthKey: plan.monthKey,
+            callsPerQuery: plan.callsPerQuery,
         });
 
     } catch (error) {
