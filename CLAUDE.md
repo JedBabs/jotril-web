@@ -6,7 +6,7 @@
 
 > This file is the single source of truth for all Claude sessions on this project.
 > Update it immediately whenever architecture, bugs, fixes, or intentions change.
-> Last updated: 2026-06-20 (full-engine live path + budget governor)
+> Last updated: 2026-06-20 (full-engine live path + budget governor; 3-Space failover; scan persistence; heatmap/UX; sentence-level auto-tuner). Plan: Hobby now → 50-tester private beta → Pro before public launch.
 
 ---
 
@@ -96,7 +96,7 @@ src/
 │       ├── gradio-proxy/route.js    POST — Edge Runtime proxy, injects HF_TOKEN server-side
 │       ├── quota/route.js           GET — current quota status
 │       ├── dashboard/route.js       GET — user stats, recent scans
-│       ├── scan-results/route.js    GET — paginated scan history (cursor-based)
+│       ├── scan-results/route.js    GET — paginated scan history (cursor-based) | POST — persist a completed scan (auth-gated; called by useAnalyze)
 │       ├── scan-results/[id]/       GET — single scan with full chunks
 │       ├── keys/route.js            GET/POST/DELETE — API key management
 │       ├── admin/config/            GET/PATCH/POST — engine config read/update/undo
@@ -108,11 +108,12 @@ src/
 │       └── cron/keep-awake/         GET — pings HF Spaces daily (requires CRON_SECRET header)
 │
 ├── components/
-│   ├── Providers.jsx                SessionProvider + ThemeProvider + ProcessProvider + DevDebugOverlay
+│   ├── Providers.jsx                SessionProvider + ThemeProvider + ProcessProvider + ScanGuard + DevDebugOverlay
+│   ├── ScanGuard.jsx                In-app "scan in progress" banner + beforeunload guard (subscribes to QueueManager)
 │   ├── Navbar.jsx                   Fixed nav, auth status, tier badge, mobile hamburger, magnetic fx
 │   ├── FileUploader.jsx             Drag-drop (PDF/DOCX/TXT ≤20MB) + textarea (50k chars) + cost preview
 │   ├── ScoreGauge.jsx               Stacked bar: human%/mixed%/ai%, label, metadata
-│   ├── HeatmapViewer.jsx            Sentence-level color map with hover tooltips + dev metrics mode
+│   ├── HeatmapViewer.jsx            Sentence-level color map (grouped into paragraphs by chunk.para to preserve spacing); truncates to a preview past 100 sentences + points to the PDF; hover tooltips + dev metrics
 │   ├── QuotaBar.jsx                 10-segment bars for points/text/doc usage + tier badge
 │   ├── SignUpNudge.jsx              Conversion banner (guest→signup, free→pro), sessionStorage dismiss
 │   ├── Toast.jsx                    Individual toast notification (pub-sub)
@@ -127,7 +128,7 @@ src/
 │   └── ProcessContext.jsx           Global context for process overlay state
 │
 ├── hooks/
-│   ├── useAnalyze.js                Main analysis orchestrator hook (see §7 for full flow)
+│   ├── useAnalyze.js                Main analysis orchestrator hook — two-call flow: /api/analyze → queue windows → /api/attribute → persist scan (see §7)
 │   └── usePPP.js                    Purchase Power Parity pricing via geojs.io
 │
 └── lib/
@@ -295,16 +296,22 @@ fair-use allows ~3 running free CPU Spaces). Add a 4th name here and concurrency
 queue: []                  // Pending chunk jobs, sorted descending by tier
 activeJobs: Map            // jobId → job object
 activeWorkers: number      // Currently running _runWorkerLoop instances
-MAX_CONCURRENCY: 60        // Max simultaneous workers (downscales on drops)
+PER_SPACE_CONCURRENCY: 30  // Validated free-CPU-Space ceiling (empirical)
+MAX_CONCURRENCY            // = PER_SPACE_CONCURRENCY × SPACES.length → 90 with 3 Spaces (downscales on drops)
 estimatedLatencyMs: 1200   // Used for ETA calculations
 telemetry: {
   processedChunks,         // Total successfully processed
   connectionDrops,         // Total failed chunks (before sweep)
   sweeperRetries,          // Total chunks re-queued by auto-sweeper
   sweeperEngagements,      // How many times sweeper triggered
-  edgeProxyCalls           // Total proxy calls made (watch Vercel 100K/day limit)
+  edgeProxyCalls           // Synced in _notify from jotrilService.proxyStats.calls (honest submit+poll tally, session-scoped)
 }
 ```
+
+**ETA / progress notes:**
+- `calculateJobETA(jobId)` returns **milliseconds**; `_notify` converts to seconds for the sidebar (`etaSeconds`). (Bug fixed 2026-06-20: it was emitted as raw ms → "408:40".)
+- Worker spawns are **staggered over ~500ms** so 60-90 queries don't fire (and complete) in lockstep — smooths the progress bar. On free CPU the residual wave is the Space's batch inference time, not idle.
+- Real budget enforcement lives server-side in `UsageBudget`/budget-governor; `edgeProxyCalls` is just a dev-overlay gauge.
 
 **Job object shape:**
 ```js
@@ -334,9 +341,10 @@ telemetry: {
 - `continue` in while loop organically picks up re-injected chunks (no manual worker spawn needed)
 
 **Worker lifecycle:**
-- `enqueueJob` spawns `min(MAX_CONCURRENCY - activeWorkers, queue.length)` workers
+- `enqueueJob` spawns `min(MAX_CONCURRENCY - activeWorkers, queue.length)` workers (staggered start)
 - Each worker runs `_runWorkerLoop()` which loops until queue is empty
 - On exit: `this.activeWorkers--` releases the slot
+- **Space pick is failover-aware:** `SPACES[(chunkIndex + retries[idx]) % SPACES.length]` — a sweeper-reinjected chunk starts on a *different* Space than the one that failed it. Combined with `queryJotrilModel`'s per-retry rotation, one dead Space costs ~1 extra request/chunk instead of degrading ⅓ of the scan (see §8).
 
 **Important — `QueueSidebar` and `DevDebugOverlay` import `QueueManager` at the TOP LEVEL** (not dynamically). Any syntax or parse error in `queue-manager.js` crashes the ENTIRE client bundle including `layout.js`, taking down all pages.
 
@@ -387,7 +395,7 @@ Middleware (`src/middleware.js`) protects `/dashboard` and `/admin`. Admin route
 5. Final validation — train/test/full metrics + top 20 trials
 6. Save to TuningRun. Admin can apply or revert.
 
-Metrics optimized: MCC (Matthews Correlation Coefficient) as primary, accuracy/precision/recall/F1 as secondary.
+**Objective (UPDATED 2026-06-20 — was doc-level binary MCC):** `evaluateConfig` now scores at the **sentence level** (valid because synthetic docs are same-label stitched, so every sentence's truth = the doc label — ~5x more signal). It optimizes `objective = balancedAccuracy − mixedPenalty × mixedFraction` where `balancedAccuracy = (aiRecall + humanRecall)/2`. This rewards high, balanced ai+human accuracy and penalizes "mixed" (mixed never matches a true label), so the tuner pushes **tighter mixed margins + more decisive labels** — what the product wants. `DEFAULT_MIXED_PENALTY = 0.30` (constant, NOT in PARAM_SPACE — tuning the penalty that defines the objective would be circular). `PARAM_SPACE` mixed band also tightened (humanMax max 78, mixedMax max 80). Doc-level MCC/accuracy still computed and returned for reporting (`bestMcc`).
 
 ---
 
@@ -459,6 +467,12 @@ Design language: glassmorphism (`backdrop-filter: blur(24px)`), gradient buttons
   - `/api/analyze` rewritten: governor → returns `scenarios[]`+`sentences[]`+budget meta. `/api/attribute` (NEW): runs `attributeScoresToSentences→contextualSmooth→classifyResults` + reconcile. `useAnalyze` enqueues window texts and posts scores to `/api/attribute`. `processFinalResults(chunks,...)` now consumes pre-classified chunks.
   - `edgeProxyCalls` made honest: counted in `secureFetch` (submit + every poll) via exported `proxyStats`, reflected in `telemetry` by `_notify`.
   - **Verified:** DB reservation queries (upsert/atomic increment/decrement/day-roll) against live Supabase; governor decision math across fresh/on-track/overshoot/severe/ADMIN cases. NOT yet run end-to-end in the browser (dev server was down).
+- **Scan persistence (was: nothing ever wrote a ScanResult).** `/api/scan-results` was GET-only — scans were never saved, so "previous uploads" was always empty. Added `POST /api/scan-results` (auth-gated) + a best-effort fire-and-forget save in `useAnalyze.processFinalResults` (guests get a silent 401). Enables history + PDF download of past scans. PDF generation itself (`generatePDFReport` in `pdf-generator.js`) already worked and is wired to a button above the heatmap.
+- **Heatmap: long-doc truncation + preserved spacing.** `HeatmapViewer` now groups chunks into `<p>` blocks by `chunk.para` (paragraph index threaded from `/api/attribute` via the scenarios' `paragraphIndex`) so original paragraph spacing is restored; and truncates to a leading preview past **100 sentences** with a banner pointing to the full PDF (the PDF still gets all sentences).
+- **Refresh guard.** New `ScanGuard` component (mounted in `Providers`) shows an in-app "scan in progress — don't refresh" banner whenever the queue has active jobs (browsers ignore custom `beforeunload` text, so the clear message is in-app) + arms `beforeunload` as a backstop. A hard refresh mid-scan still wipes the client-side queue singleton.
+- **Concurrency tied to Space count.** `MAX_CONCURRENCY = PER_SPACE_CONCURRENCY(30) × SPACES.length`. Empirically a free CPU Space handles ~30 concurrent efficiently (it queues, doesn't choke), so total scales with the pool (90 at 3 Spaces). My earlier "drop to 8" instinct was wrong — user tested it.
+- **Third HF Space + multi-Space hardening.** Added `JedBabs/Jotril-Space-3` to `SPACES` (HF fair-use allows ~3 free CPU Spaces; user confirmed the 3-running cap). Fixed keep-awake (cron had a hardcoded 2-Space list → now imports shared `SPACES` and warms via real `queryJotrilModel`; standalone `pingJotrilModels` also warms all). Added **failover rotation** so a dead/cold Space costs ~1 extra request/chunk instead of ⅓ of the scan (see §8/§9).
+- **Dev-bundle staleness gotcha:** several of the above edits required a **hard refresh** before they took effect — Turbopack Fast Refresh kept the old `QueueManager` singleton in memory. Symptom: "can't monitor the scan on the panel" / stale 422s in console. Hard refresh fixed it.
 
 ### Ongoing / Background Issues
 - **`queryJotrilBatch`** always throws (unconditional `throw` after the if block). Dead code — not in the live path. Leave for now.
@@ -493,6 +507,12 @@ Design language: glassmorphism (`backdrop-filter: blur(24px)`), gradient buttons
 9. **Tailwind v4** — config is in `postcss.config.mjs` via `@tailwindcss/postcss`. There is no `tailwind.config.js`. Class naming is standard but some v3 utilities may behave differently.
 
 10. **`next.config.mjs` `serverExternalPackages`** includes `pdf-parse` and `mammoth` — these must stay server-side only. Don't import them in client components.
+
+11. **After editing `queue-manager.js`/`jotrilService.js` (or anything feeding the QueueManager singleton), HARD REFRESH the browser.** Turbopack Fast Refresh keeps the old singleton in memory, so edits appear not to work (stale progress panel, phantom old errors). This burned a debugging session — the code was fine, the bundle was stale.
+
+12. **`SPACES` (jotrilService) is the single source of truth for the Space pool.** Concurrency, load balancing, failover rotation, and keep-awake all derive from it. Add/remove a Space there and everything follows. Don't hardcode Space lists elsewhere (the keep-awake cron used to, and Space-3 silently wasn't kept awake). The Space must actually exist + be RUNNING before adding it, or ⅓ of traffic 404s (failover now softens this, but don't rely on it).
+
+13. **`/api/gradio-proxy` calls = Vercel Function Invocations.** Current plan is **Hobby (free) = 1M/month** (NOT a daily limit; exhaustion PAUSES the whole deployment). Hobby is also **non-commercial-only** — Jotril is commercial, so Pro is required before public launch. Budget is governed server-side via `UsageBudget`/budget-governor (§14/§15).
 
 ---
 
