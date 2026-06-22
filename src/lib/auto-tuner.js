@@ -119,9 +119,9 @@ export async function buildScoreCache(documents, onProgress, checkCancel = null)
     // Step 3: Unleash the fully unblocked continuous worker pool
     let rawResults = [];
     if (textsToQuery.length > 0) {
-        rawResults = await predictBatch(textsToQuery, 16, 0, checkCancel, (pct, msg) => {
+        rawResults = await predictBatch(textsToQuery, (pct, msg) => {
             onProgress?.(Math.min(99, pct), `Analyzing linguistic patterns: ${msg}`);
-        });
+        }, checkCancel, 16, 0);
     }
 
     // Step 4: Validate — warn but don't crash on partial failures
@@ -134,10 +134,12 @@ export async function buildScoreCache(documents, onProgress, checkCancel = null)
     textsToQuery.forEach((text, i) => {
         const result = rawResults[i];
         let score;
-        if (!result) {
-            score = 50; // Neutral fallback for timed-out queries
+        // queryJotrilModel returns { score (0-100), aiProbability (0-1), ... } — there is
+        // no `aiScore` field. aiProbability is the model's source-of-truth signal.
+        if (!result || result.aiProbability == null) {
+            score = 50; // Neutral fallback for timed-out/malformed queries
         } else {
-            score = result.aiScore * 100;
+            score = result.aiProbability * 100;
             // Same confidence penalty as production pipeline
             const wordCount = text.split(/\s+/).length;
             if (wordCount < 10) {

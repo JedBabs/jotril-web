@@ -11,16 +11,20 @@ import mammoth from 'mammoth';
 export async function extractTextFromDocument(buffer, mimeType) {
     if (!buffer) throw new Error('No document buffer provided');
 
-    // PDF parsing
+    // PDF parsing — pdf-parse v2 exports a PDFParse class (the old callable
+    // default export no longer exists). Externalized in next.config.mjs.
     if (mimeType === 'application/pdf') {
+        let parser;
         try {
-            // pdf-parse is externalized in next.config.mjs so a standard require works
-            const pdfParse = require('pdf-parse');
-            const data = await pdfParse(buffer);
-            return data.text;
+            const { PDFParse } = require('pdf-parse');
+            parser = new PDFParse({ data: new Uint8Array(buffer) });
+            const result = await parser.getText();
+            return result?.text || '';
         } catch (error) {
             console.error('[FileParser] PDF parsing failed:', error);
             throw new Error('Failed to parse PDF document. It may be corrupted or encrypted.');
+        } finally {
+            if (parser?.destroy) await parser.destroy().catch(() => {});
         }
     }
 
@@ -44,6 +48,40 @@ export async function extractTextFromDocument(buffer, mimeType) {
     }
 
     throw new Error(`Unsupported document format: ${mimeType}`);
+}
+
+function decodeEntities(s) {
+    return String(s)
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return ''; } })
+        .replace(/&#(\d+);/g, (_, d) => { try { return String.fromCodePoint(parseInt(d, 10)); } catch { return ''; } });
+}
+
+/**
+ * Convert reproduced DOCX HTML into plain, analysable prose with all TABLE
+ * content removed — so tabular data is exempt from AI scoring (not scored, not
+ * counted in the breakdown, and not highlighted). Block-level elements become
+ * line breaks so sentence/paragraph boundaries survive for the chunker.
+ *
+ * @param {string} html - mammoth convertToHtml output
+ * @returns {string} table-free plain text
+ */
+export function htmlToProseText(html) {
+    let s = String(html || '');
+    s = s.replace(/<table\b[\s\S]*?<\/table>/gi, '\n');      // drop tables entirely
+    s = s.replace(/<(?:br|\/p|\/div|\/h[1-6]|\/li|\/tr|\/figure|\/blockquote)\b[^>]*>/gi, '\n');
+    s = s.replace(/<[^>]+>/g, '');                            // strip remaining tags
+    s = decodeEntities(s);
+    return s
+        .replace(/[ \t ]+/g, ' ')
+        .replace(/[ \t]*\n[ \t]*/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
 }
 
 /**

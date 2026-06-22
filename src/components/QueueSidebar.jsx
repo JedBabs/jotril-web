@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Clock, Activity, FileText } from "lucide-react";
+import { Clock, Activity, FileText, X } from "lucide-react";
 import { QueueManager } from "@/lib/queue-manager";
 
 export default function QueueSidebar() {
@@ -12,10 +12,10 @@ export default function QueueSidebar() {
         const unsubscribe = QueueManager.subscribe((payload) => {
             setJobs(payload.jobs);
         });
-
-        const handleCancel = (e, id) => { e.stopPropagation(); QueueManager.cancelJob(id); };
-                        return () => unsubscribe();
+        return () => unsubscribe();
     }, []);
+
+    const cancelJob = (id) => QueueManager.cancelJob(id);
 
     if (jobs.length === 0) return null;
 
@@ -60,9 +60,20 @@ export default function QueueSidebar() {
                                         <FileText className="w-4 h-4 text-ash shrink-0" />
                                         <p className="font-bold text-sm text-navy truncate">{job.filename}</p>
                                     </div>
-                                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-accent-purple shrink-0 bg-accent-purple/10 px-2 py-0.5 rounded-full">
-                                        <Clock className="w-3 h-3" />
-                                        {etaMins}:{etaSecs < 10 ? '0' : ''}{etaSecs}
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-accent-purple bg-accent-purple/10 px-2 py-0.5 rounded-full">
+                                            <Clock className="w-3 h-3" />
+                                            {etaMins}:{etaSecs < 10 ? '0' : ''}{etaSecs}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => cancelJob(job.jobId)}
+                                            title="Cancel this scan"
+                                            aria-label={`Cancel ${job.filename}`}
+                                            className="p-1 rounded-full text-ash hover:text-score-ai hover:bg-score-ai/10 transition-colors"
+                                        >
+                                            <X className="w-3.5 h-3.5" />
+                                        </button>
                                     </div>
                                 </div>
 

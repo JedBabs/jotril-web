@@ -268,21 +268,24 @@ export default function EnhancedAccountPortal() {
                                                     whileHover={{ scale: 1.05 }}
                                                     whileTap={{ scale: 0.95 }}
                                                     onClick={async () => {
-                                                        openProcess("download", "Generating Report PDF", "Compiling styles & layout...");
+                                                        const controller = new AbortController();
+                                                        openProcess("download", "Generating Report PDF", "Compiling styles & layout...", () => controller.abort());
                                                         simulateProgress([
                                                             { progress: 30, duration: 400, step: "Extracting semantic tokens..." },
                                                             { progress: 70, duration: 600, step: "Executing predictive layers..." }
                                                         ]);
                                                         try {
-                                                            const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
-                                                            libGen({
+                                                            const { downloadReport } = await import("@/lib/download-report");
+                                                            await downloadReport({
+                                                                file: scannedFile,
                                                                 filename: scannedFile ? scannedFile.name : 'Text_Scan',
                                                                 breakdown,
                                                                 overallLabel,
                                                                 chunks: results,
                                                                 sentenceCount: results.length,
                                                                 wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
-                                                                sourceHtml
+                                                                sourceHtml,
+                                                                signal: controller.signal
                                                             });
                                                         } finally {
                                                             closeProcess();
@@ -393,34 +396,23 @@ export default function EnhancedAccountPortal() {
                                                         whileHover={{ scale: 1.05 }}
                                                         whileTap={{ scale: 0.95 }}
                                                         onClick={async () => {
-                                                            openProcess("download", "Generating Report PDF", "Fetching analysis data...");
+                                                            const controller = new AbortController();
+                                                            openProcess("download", "Generating Report PDF", "Fetching analysis data...", () => controller.abort());
                                                             simulateProgress([
                                                                 { progress: 20, duration: 200, step: "Retrieving chunks from database..." },
                                                                 { progress: 50, duration: 400, step: "Extracting semantic tokens..." },
                                                                 { progress: 80, duration: 300, step: "Executing predictive layers..." }
                                                             ]);
                                                             try {
-                                                                // Fetch full chunk data on demand since it's missing from the lightweight list view
-                                                                const res = await fetch(`/api/scan-results/${scan.id}`);
-                                                                const fullScan = await res.json();
-
-                                                                if (fullScan.error) {
-                                                                    showToast(fullScan.error, "error");
-                                                                    return;
-                                                                }
-
-                                                                const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
-                                                                libGen({
-                                                                    filename: fullScan.filename || 'Text_Scan',
-                                                                    breakdown: fullScan.breakdown || {},
-                                                                    overallLabel: fullScan.overallLabel || "",
-                                                                    chunks: fullScan.chunks || [],
-                                                                    sentenceCount: fullScan.sentenceCount || 0,
-                                                                    wordCount: fullScan.wordCount || 0
-                                                                });
+                                                                // The server fetches the full scan (chunks + reproduced
+                                                                // document HTML) and renders the PDF by id.
+                                                                const { downloadReport } = await import("@/lib/download-report");
+                                                                await downloadReport({ scanId: scan.id, filename: scan.filename || 'Text_Scan', signal: controller.signal });
                                                             } catch (err) {
-                                                                showToast("Failed to generate PDF.", "error");
-                                                                console.error(err);
+                                                                if (err?.name !== "AbortError") {
+                                                                    showToast("Failed to generate PDF.", "error");
+                                                                    console.error(err);
+                                                                }
                                                             } finally {
                                                                 closeProcess();
                                                             }

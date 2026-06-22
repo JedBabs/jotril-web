@@ -15,17 +15,23 @@ export function ProcessProvider({ children }) {
         progress: 0,
         title: "",
         stepText: "",
+        cancellable: false,
     });
 
     const timersRef = useRef([]);
+    // Holds the cancel handler supplied by whoever opened the current process.
+    // Kept in a ref (not state) so it's never stale inside the overlay's onClick.
+    const cancelHandlerRef = useRef(null);
 
-    const openProcess = useCallback((variant, title, initialStep = "Initializing...") => {
+    const openProcess = useCallback((variant, title, initialStep = "Initializing...", onCancel = null) => {
+        cancelHandlerRef.current = onCancel;
         setProcessState({
             isActive: true,
             variant,
             progress: 0,
             title,
             stepText: initialStep,
+            cancellable: typeof onCancel === "function",
         });
     }, []);
 
@@ -41,12 +47,28 @@ export function ProcessProvider({ children }) {
         // Clear any auto-progression timers
         timersRef.current.forEach(clearTimeout);
         timersRef.current = [];
+        cancelHandlerRef.current = null;
 
         setProcessState(prev => ({ ...prev, progress: 100 })); // Jump to 100 for a smooth exit
 
         setTimeout(() => {
             setProcessState(prev => ({ ...prev, isActive: false }));
         }, 500); // Allow fade out animation
+    }, []);
+
+    // Invoked by the overlay's Cancel button. Runs the registered cancel handler
+    // (abort fetches / cancel the queue job) then tears the overlay down immediately.
+    const cancelProcess = useCallback(() => {
+        const handler = cancelHandlerRef.current;
+        cancelHandlerRef.current = null;
+
+        timersRef.current.forEach(clearTimeout);
+        timersRef.current = [];
+
+        try { handler?.(); } catch { /* a failed cancel shouldn't block teardown */ }
+
+        // Cancelled processes tear down right away — no "100% then fade" flourish.
+        setProcessState(prev => ({ ...prev, isActive: false, cancellable: false }));
     }, []);
 
     // A helper to auto-simulate progress over a duration
@@ -73,10 +95,11 @@ export function ProcessProvider({ children }) {
             openProcess,
             updateProcess,
             closeProcess,
+            cancelProcess,
             simulateProgress
         }}>
             {children}
-            <ProcessOverlay {...processState} />
+            <ProcessOverlay {...processState} onCancel={cancelProcess} />
         </ProcessContext.Provider>
     );
 }

@@ -48,6 +48,7 @@ model ScanResult {
   overallLabel  String
   breakdown     Json // { human, mixed, ai }
   chunks        Json // The analyzed chunks
+  sourceHtml    String?  @db.Text // Reproduced document HTML (DOCX/mammoth) for high-fidelity past-scan PDFs; null if absent or oversized
   createdAt     DateTime @default(now())
 
   @@index([userId])

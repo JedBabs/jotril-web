@@ -6,7 +6,7 @@
 
 > This file is the single source of truth for all Claude sessions on this project.
 > Update it immediately whenever architecture, bugs, fixes, or intentions change.
-> Last updated: 2026-06-20 (full-engine live path + budget governor; 3-Space failover; scan persistence; heatmap/UX; sentence-level auto-tuner). Plan: Hobby now → 50-tester private beta → Pro before public launch.
+> Last updated: 2026-06-22 (user-cancellable processes — Cancel button on the ProcessOverlay + per-job cancel in QueueSidebar, wired through AbortControllers and a hardened `QueueManager.cancelJob`, see §15/§9; load-time fixes — parallelized the sequential DB queries in `/api/dashboard` and `getQuotaStatus`, killed the duplicate `/api/quota` fetch, and code-split + dev-gated `DevDebugOverlay` out of the global bundle, see §15). Prior: FIXED 0-byte PDF downloads — binary routes hand-set Content-Length, which zeroed browser downloads while node fetch hid it; now return Uint8Array, see §15/§16. Gotenberg/Cloud Run high-fidelity DOCX path scaffolded + deployed. ScanResult.sourceHtml column PUSHED to live DB + DOCX report fidelity verified end-to-end; PDF report engine rebuilt on headless Chrome — see §19. Plan: Hobby now → 50-tester private beta → Pro before public launch.
 
 ---
 
@@ -33,7 +33,7 @@ Detection is done at the sentence level — each sentence gets a score 0-100 and
 | ORM | Prisma | 5.22.0 |
 | AI Client | @gradio/client | 2.2.0 |
 | PDF Parse | pdf-parse, pdfjs-dist, pdf-lib | mixed |
-| PDF Gen | jsPDF + jspdf-autotable, pdfmake | 4.2.1 |
+| PDF Gen | **Headless Chrome HTML→PDF** (puppeteer-core 25.1 + @sparticuz/chromium 149) + pdf-lib overlay | — |
 | DOCX Parse | mammoth | 1.12.0 |
 | Email | Nodemailer | 7.0.13 |
 | Password | bcrypt | 6.0.0 |
@@ -58,6 +58,10 @@ EMAIL_SERVER_PASSWORD   SMTP password
 EMAIL_FROM              Sender email address
 CRON_SECRET             Vercel cron job authorization (used in keep-awake endpoint)
 DEV_PIN                 6-digit dev admin PIN — change in production
+GOTENBERG_URL           (optional) self-hosted Gotenberg base URL for high-fidelity DOCX→PDF (Cloud Run). SERVER-ONLY. Unset → standard mammoth report path.
+GCP_SA_KEY              (optional) base64-encoded GCP service-account JSON. Set → convert route mints a Cloud Run ID token (IAM auth) for a --no-allow-unauthenticated Gotenberg. SERVER-ONLY.
+GOTENBERG_AUTH          (optional) static Authorization header fallback (only used if GCP_SA_KEY unset; Gotenberg has NO built-in basic auth — only for a self-hosted auth proxy)
+NEXT_PUBLIC_REPORT_FIDELITY_ENGINE  (optional) set to "gotenberg" to let the client attempt the fidelity path; pair with GOTENBERG_URL
 ```
 
 ---
@@ -108,7 +112,7 @@ src/
 │       └── cron/keep-awake/         GET — pings HF Spaces daily (requires CRON_SECRET header)
 │
 ├── components/
-│   ├── Providers.jsx                SessionProvider + ThemeProvider + ProcessProvider + ScanGuard + DevDebugOverlay
+│   ├── Providers.jsx                SessionProvider + ThemeProvider + ProcessProvider + ScanGuard + DevTools (dynamic, dev-gated DevDebugOverlay)
 │   ├── ScanGuard.jsx                In-app "scan in progress" banner + beforeunload guard (subscribes to QueueManager)
 │   ├── Navbar.jsx                   Fixed nav, auth status, tier badge, mobile hamburger, magnetic fx
 │   ├── FileUploader.jsx             Drag-drop (PDF/DOCX/TXT ≤20MB) + textarea (50k chars) + cost preview
@@ -120,12 +124,12 @@ src/
 │   ├── ToastContainer.jsx           Fixed top-right container for toasts
 │   ├── GlitchLogo.jsx               Animated Jotril AI logo
 │   ├── ThemeSwitcher.jsx            Light/dark/colorful toggle via next-themes
-│   ├── ProcessOverlay.jsx           Cinematic progress modal (analyze/upload/download variants)
+│   ├── ProcessOverlay.jsx           Cinematic progress modal (analyze/upload/download variants) + Cancel button (when cancellable)
 │   ├── ColdStartOverlay.jsx         GPU warmup screen with Retry button
-│   ├── QueueSidebar.jsx             Background job queue display — imports QueueManager at top level
-│   ├── DevDebugOverlay.jsx          Dev tools overlay — imports QueueManager at top level
+│   ├── QueueSidebar.jsx             Background job queue display + per-job ✕ cancel — imports QueueManager at top level
+│   ├── DevDebugOverlay.jsx          Dev tools overlay (imports QueueManager) — loaded dynamically + dev-gated via Providers, NOT in the global bundle
 │   ├── InteractiveBackground.jsx    Particle canvas (50 desktop / 25 mobile, responsive)
-│   └── ProcessContext.jsx           Global context for process overlay state
+│   └── ProcessContext.jsx           Global process-overlay state + cancel registration (openProcess(variant,title,step,onCancel) / cancelProcess)
 │
 ├── hooks/
 │   ├── useAnalyze.js                Main analysis orchestrator hook — two-call flow: /api/analyze → queue windows → /api/attribute → persist scan (see §7)
@@ -141,10 +145,13 @@ src/
     ├── auth-security.js             Brute force protection + token management
     ├── prisma.js                    Prisma singleton (avoids hot-reload connection leaks)
     ├── email.js                     Nodemailer + branded HTML email templates
-    ├── file-parser.js               PDF/DOCX/TXT extraction
+    ├── file-parser.js               PDF/DOCX/TXT extraction (PDF uses pdf-parse v2 `PDFParse` class)
     ├── parse-analysis-stream.js     SSE stream parser for Gradio responses
-    ├── pdf-generator.js             PDF report generation for scan results
-    ├── pdf-overlay.js               PDF heatmap overlay on original document
+    ├── download-report.js           ★ Client entry for "Download PDF" — routes PDF→overlay, else→/api/report (see §19)
+    ├── report/                      ★ Headless-Chrome report engine: design-system, report-template, highlight-injector, render (see §19)
+    ├── pdf-generator.js             DEPRECATED shim — old pdfmake/html-to-pdfmake generator, replaced by report/ + /api/report
+    ├── pdf-overlay.js               In-place highlight overlay on original PDFs (pdf-lib) + merged branded cover (see §19)
+    ├── empty-module.js              Build stub — aliases pdfjs-dist's require("canvas") out of the client bundle
     ├── fingerprint.js               Client-side hardware fingerprinting (15+ signals, 0-100 score)
     └── exclusion-filter.js          Filters generic/boilerplate sentences from scoring
 
@@ -166,7 +173,7 @@ vercel.json       Cron: /api/cron/keep-awake daily at 0 0 * * * UTC
 | User | id, email, password, name, role, emailVerified, purchasedPoints | Auth + tier + wallet |
 | ApiKey | id, key (`jt_<32-hex>`), userId | External REST API keys |
 | QuotaUsage | hash, userId, type, pointsCost, textHash, createdAt | Usage tracking per device/user |
-| ScanResult | userId, filename, type, chunks (JSON), breakdown, overallLabel | Persisted scan output |
+| ScanResult | userId, filename, type, chunks (JSON), breakdown, overallLabel, **sourceHtml** (Text?, ≤2MB) | Persisted scan output; sourceHtml = reproduced DOCX HTML for high-fidelity past-scan PDFs |
 | PasswordResetToken | token, userId, expiresAt (1h) | Password recovery |
 | EmailVerificationToken | token, identifier, expiresAt (24h) | Email confirmation |
 | AccountLockout | identifier, failedAttempts, lockedUntil | Brute force protection |
@@ -346,7 +353,9 @@ telemetry: {
 - On exit: `this.activeWorkers--` releases the slot
 - **Space pick is failover-aware:** `SPACES[(chunkIndex + retries[idx]) % SPACES.length]` — a sweeper-reinjected chunk starts on a *different* Space than the one that failed it. Combined with `queryJotrilModel`'s per-retry rotation, one dead Space costs ~1 extra request/chunk instead of degrading ⅓ of the scan (see §8).
 
-**Important — `QueueSidebar` and `DevDebugOverlay` import `QueueManager` at the TOP LEVEL** (not dynamically). Any syntax or parse error in `queue-manager.js` crashes the ENTIRE client bundle including `layout.js`, taking down all pages.
+**Cancellation (`cancelJob(jobId)`):** sets `job.cancelled = true` **before** deleting the job from `activeJobs` and filtering the queue. Queued chunks of the job are skipped via the existing `if (!parentJob) continue` guard; a worker already awaiting an in-flight query holds a live reference to the job object, so `_runWorkerLoop` re-checks `parentJob.cancelled` before the finish/sweeper block and before firing `onScanComplete` — without the flag a cancelled job could still write results and fire its callback. Callers: `useAnalyze.cancelAnalysis` (foreground/overlay) and the per-job ✕ in `QueueSidebar` (background). See §15 (2026-06-22).
+
+**Important — `QueueSidebar` imports `QueueManager` at the TOP LEVEL** (not dynamically). Any syntax or parse error in `queue-manager.js` crashes the ENTIRE client bundle including `layout.js`, taking down all pages. (`DevDebugOverlay` *used* to as well, but as of 2026-06-22 it's `dynamic(..., {ssr:false})` + dev-gated in `Providers`, so it's no longer in the global bundle — a parse error there now only surfaces for dev users when the lazy chunk loads. `ScanGuard` lazy-imports `queue-manager` inside an effect.)
 
 ---
 
@@ -365,6 +374,8 @@ telemetry: {
 Point cost: `Math.max(10, Math.min(200, sentenceCount * 3))`
 
 Quota is tracked per device (hardware fingerprint hash) for unauthenticated users, per userId for authenticated users. Results are cached for 24h by text SHA-256 hash (so re-scanning the same text is free).
+
+**⚠️ Enforcement lives in `/api/analyze`, NOT `/api/estimate`.** `checkQuota` + `recordQuotaUsage` are called on the analyze route (the binding gate); `/api/estimate` only previews cost and records nothing. The device hash uses a **stable-signal subset** (`hashFingerprint` → `STABLE_FP_KEYS`) so a single volatile signal can't reset the quota. Unauthenticated scans also pass a generous per-IP/hour flood breaker (`checkIpFloodGate`, reuses the `AnalysisRequest` table). See §15 (2026-06-22).
 
 ---
 
@@ -447,6 +458,42 @@ Design language: glassmorphism (`backdrop-filter: blur(24px)`), gradient buttons
 
 ## 15. Known Issues & History
 
+### Fixed 2026-06-22
+- **🚩 Unauthenticated abuse gate was a no-op — fingerprint quota now actually enforced.** The client computed + sent the hardware vector on every scan, but the live path threw it away: `/api/analyze` never read `hardwareFootprint`, never called `checkQuota`, and **`recordQuotaUsage` was only ever called by `/api/v1/detect`** (the API-key path). So the `QuotaUsage` table got **zero rows** from the web UI → every `checkQuota` aggregate read 0 → `allowed:true` forever. The only place quota was *checked*, `/api/estimate`, is an advisory client-triggered preview an abuser just skips. Net: unauthenticated (and FREE) users had **effectively unlimited scans**. Three-part fix:
+  - **Enforcement wired into `/api/analyze`** (`route.js`) — the binding gate now lives on the route that triggers the HF queries (charging up-front closes the "never call `/api/attribute`" bypass). Flow: `hashFingerprint` → `checkCache` (same text/24h = free re-scan, no double-charge) → unauth-only IP flood breaker → `checkQuota` (429 on block) → `resolveScan` → `recordQuotaUsage` (+ IP log). Applies to authed tiers too (FREE/PRO limits were equally unenforced). Returns 429 `{error}` which `useAnalyze` already toasts.
+  - **Fingerprint hardened against reset (`quota-manager.js` `hashFingerprint`)** — was `SHA-256(JSON.stringify(wholeVector))`, so ANY signal change (timezone while travelling, font/plugin install, docking-station monitor remap, 4G↔wifi) minted a fresh identity → trivial quota reset AND punished honest users. Now hashes a **fixed-order STABLE subset** (`STABLE_FP_KEYS`: webgl/audio/canvas/domRect/math/hwConcurrency/deviceMemory/maxTouchPoints/scrollbarWidth/displayGamut/screenRatio/platform); volatile signals excluded. Achieves the "fuzzy allowance" the vector was built for via stable-subset hashing — the `calculateFuzzyMatchScore` matcher in `fingerprint.js` remains **dead code** (never imported; the stable hash supersedes it). Validated: flipping all volatile fields → SAME hash; different GPU/CPU → different hash; key-order independent; missing vector → `unknown-device` (fails closed).
+  - **IP flood breaker (`quota-manager.js`: `hashIp`/`checkIpFloodGate`/`recordIpRequest`)** — SECONDARY net only. Product is **school-first**: 30 personal laptops behind one NAT IP = 30 distinct fingerprints, so the device hash is the real defense; a classroom's legit free scans can route 100+ req/hr through one IP, so a tight per-IP quota would punish real users. Ceiling is deliberately generous (`UNAUTH_IP_HOURLY_CEILING = 200`, set 0 to disable) — only scripted single-IP volume trips it; VPN+spoofed-fingerprint is accepted residual risk (backstop: small free allowance, heavy use needs sign-in). **Reuses the orphaned `AnalysisRequest` table** (`hash = "ip:<sha256>"`) so **NO migration needed**; fails OPEN on any DB error. Unauthenticated only — never throttles signed-in users by network.
+- **User-cancellable processes (analyze / download / background scans).** Every long-running flow now has a Cancel control instead of forcing the user to wait or hard-refresh.
+  - `ProcessContext` gained a 4th `openProcess(variant, title, step, onCancel)` arg + a `cancelProcess()` action + a `cancellable` flag. The handler is stored in a ref (never stale inside the overlay's onClick). `cancelProcess` runs the handler, clears `simulateProgress` timers, and tears the overlay down immediately (no "100% then fade"). `closeProcess` also nulls the handler.
+  - `ProcessOverlay` renders a glassy **Cancel** button (below the warning footer) whenever `cancellable && onCancel`.
+  - **Analyze** (`useAnalyze`): a per-run `AbortController` is passed to both `/api/analyze` and `/api/attribute`; the queue `jobId` is captured; a `cancelledRef` guards the queue callback so late results can't paint. `cancelAnalysis` aborts the fetches, calls `QueueManager.cancelJob`, and toasts. `AbortError` / cancelled state is swallowed quietly (no error toast). Background-detoured scans (overlay already closed) are cancelled from the QueueSidebar instead.
+  - **Download** (`downloadReport` + the 3 call sites in `page.js`/`dashboard/page.jsx`): `downloadReport` now takes a `signal` (threaded to `/api/report` and `/api/report/convert`) and returns silently on `AbortError`; each Download button makes an `AbortController` and passes `() => controller.abort()` as `onCancel`. The `overlayPDFReport` (in-place pdf-lib) path is synchronous and not interruptible — acceptable (fast); the server-render path is fully abortable.
+  - **QueueSidebar**: replaced the dead/misplaced `handleCancel` stub (it was defined inside `useEffect` and never used, plus a stray-indentation artifact) with a working per-job **✕** button → `QueueManager.cancelJob(jobId)`. This is the cancel path for heavy scans detoured to the background.
+  - `QueueManager.cancelJob` **hardened**: it now sets `job.cancelled = true` *before* deleting the job, and `_runWorkerLoop` checks the flag before the finish/sweeper block and before firing `onScanComplete`. Previously a worker already awaiting an in-flight query held a live reference to the job object and could still write results + fire the completion callback after a cancel (queued items were already skipped via the `if (!parentJob) continue` guard, but the in-flight one wasn't).
+- **Load-time fixes (root cause was slow APIs, NOT bundle size).** A network waterfall showed all JS chunks loading in 100-360 ms while three API calls blocked the page: `/api/quota` at **13 s** (called **twice**), `/api/dashboard` at **10.5 s**, `/api/auth/session` ~660 ms.
+  - **Sequential DB queries → parallel.** `/api/dashboard` ran **6** independent Prisma reads sequentially (count, aggregate, apiKey count, user, recentScans, pastScanResults); `getQuotaStatus` ran **4** (points aggregate, text count, doc count, user). Against remote Supabase/pgBouncer each is a network round-trip, so they stacked into seconds. Both rewritten to a single `Promise.all` wave (~1 round-trip instead of 4-6). The dev-admin `user.upsert` in `/api/dashboard` still runs first (the others depend on the user existing), then the batch.
+  - **Duplicate `/api/quota` fetch killed.** `QuotaBar` only renders for logged-in users, whose quota is keyed by `userId` — the device fingerprint (`fp`) is irrelevant. But the effect depended on `deviceHash`, which resolves async, so it fired once with no `fp` and again once the fingerprint computed (the two quota rows). Removed `deviceHash` from the fetch + deps → **one** call, and the server skips the `JSON.parse` + SHA-256 (`hashFingerprint`) work. (`/api/quota` still accepts `fp` for any other caller; QuotaBar just no longer sends it. Note: React StrictMode still double-invokes the effect in `next dev`, so dev may show 2 calls — production is 1.)
+  - **`DevDebugOverlay` removed from the global first-load bundle.** It lived in `Providers` (global, every route) and **statically imported `QueueManager` → `jotrilService`** + framer-motion + installed error/fetch interceptors, yet renders `null` unless `session.user.isDev`. Now `dynamic(() => import('./DevDebugOverlay'), { ssr:false })` **and** gated behind a `DevTools` wrapper that checks the session — normal visitors never download it on any route. (`ScanGuard` already lazy-imports `queue-manager`, so that pattern is unchanged.)
+  - **⚠️ The reported timings were from `next dev`** (granular `node_modules_next_dist_*` / `turbopack-*.js` chunks in the waterfall confirm it). The dev server compiles each API route **on first request**, adding seconds that don't exist in production. Always benchmark load time with `next build && next start`.
+  - **Follow-up (prod build, `/api/dashboard` still ~2.3-2.6 s warm):** trimmed the route from **6 reads + 1 write to 4 reads**. (a) Removed the dev-admin `user.upsert` — it's redundant, the row is already created at login by `authorize()` in the NextAuth config (a missing row now just yields zeros/null until next sign-in, no crash). (b) Dropped `apiKey.count` (`keyCount`) and the QuotaUsage "recent activity" `findMany` (`recentScans`) — both were fetched but **never rendered** (the "Previous Uploads" table uses `pastScanResults`; `recentScans` was assigned to a dead const). Remaining reads (count, aggregate, user, scanResult.findMany) are all `userId`-indexed; residual cost is one parallel round-trip to remote Supabase. Session is JWT strategy, so `getServerSession` does **no** DB hit. Possible further wins if needed at beta scale: composite `@@index([userId, createdAt])` on QuotaUsage/ScanResult (needs `prisma db push`), client-side caching/SWR, or server-rendering the dashboard so data is fetched during SSR instead of a post-hydration round-trip.
+
+### Fixed 2026-06-21
+- **🚩 0-byte PDF downloads in the browser (binary routes set `Content-Length` manually).** `/api/report` and `/api/report/convert` returned `new NextResponse(Buffer, { headers: { 'Content-Length': String(pdf.length) } })`. The hand-set `Content-Length` collides with the dev server's `Transfer-Encoding: chunked` → **browsers honor the declared length strictly and read 0 bytes**, while Node's `fetch`/undici is lenient and reads the full body. This made it brutal to diagnose: every server-side reproduction (node fetch of `/api/report`, direct `renderReportPdf`, the convert route) returned the full ~3.4 MB and hid the bug; only a real browser (or `curl`, which also honors `Content-Length`) showed 0 bytes. Confirmed via temp file-logging in the route: it logged `RENDERED pdfBytes=3459174` yet the browser got nothing — so the loss was purely in transport. **Fix: drop the manual `Content-Length` and return `new Uint8Array(pdf)` in both routes** — let the platform frame the response. Verified with `curl` (strict client) → full bytes. **Lesson: never hand-set `Content-Length` on a `NextResponse` binary body; return a `Uint8Array`/`Blob` and let Next set the length.** (The earlier "is the report engine broken?" rabbit hole — convert/overlay/fidelity — was a red herring; the history download is the plain `POST /api/report {scanId}` path and never touched Gotenberg.)
+- **Report fidelity pass (from real user QA on a 163-image/23-table DOCX):**
+  - **Tables now exempt from the scan.** `/api/analyze` derives the scored text for DOCX from the reproduced HTML with `<table>` blocks stripped (`htmlToProseText()` in `file-parser.js`) instead of `mammoth.extractRawText` — so tabular data is NOT scored, NOT counted in the breakdown, and NOT highlighted. On the SABER file this exempted **2,837 words (~20%)** that were previously scored as prose. PDFs/TXT (no `sourceHtml`) are unchanged.
+  - **Half-word highlighting fixed.** `report/highlight-injector.js` char-aligner could drift a few chars mid-word, splitting one word across two colors (e.g. "Yo"=ai + "be"=mixed). Added `snapLabelsToWords()` — majority vote per whitespace-delimited word, ties broken ai>mixed>human (mirrors `pdf-overlay.js`'s per-item vote, which never had the bug). Marks are now word-atomic.
+  - **Injector skips tables.** Alignment text is now built via `textContentExcludingTables()` and `walk()` early-returns on `TABLE` — keeps the chunk↔DOM mapping in sync now that table text is absent from the analysed chunks, and leaves tables unhighlighted.
+  - **High-fidelity DOCX path SCAFFOLDED (dormant behind a flag) — fixes native charts + formatting.** mammoth drops native Office charts/shapes (VML `v:fill/v:path/...`, DrawingML, `c:chart`) → "missing charts" + stray data-label text, and emits generic `<table>` with no Word column widths/merges/alignment. The fix needs a real Office renderer, so a **Gotenberg (LibreOffice)** path was added:
+    - `POST /api/report/convert` (NEW, nodejs/maxDuration 60) proxies a DOCX to `GOTENBERG_URL` (`/forms/libreoffice/convert`), returns a faithful PDF. Returns **501 when `GOTENBERG_URL` is unset** → client falls back to the standard `/api/report` renderer. Server-only env; optional `GOTENBERG_AUTH` header.
+    - `download-report.js` (client): for a **fresh DOCX scan with the original File in hand** AND `NEXT_PUBLIC_REPORT_FIDELITY_ENGINE === 'gotenberg'`, it calls convert → wraps the PDF as a File → runs the existing `overlayPDFReport` (same path uploaded PDFs use: in-place highlights + branded cover). Any failure (501/network/overlay) falls through to `/api/report`. **Past scans** (no original file, only chunks+sourceHtml) still use `/api/report`.
+    - `pdf-overlay.js` `mapChunksToItems` **rewritten to WORD-LEVEL resyncing alignment** (was naive char consumption with no resync). The chunk pointer advances only on a whole-word match, so PDF text absent from the analysed chunks — **table cells (now exempt from scoring), page numbers, repeated headers/footers LibreOffice emits — stays 'human'/unhighlighted and doesn't desync** prose that follows. Char-level resync was tried first and failed (a stray table letter spuriously matched upcoming prose); word-level passed a desync unit test (table block + page number between an AI and a mixed sentence, both kept correct labels).
+    - **DEPLOYED on Google Cloud Run** (project `jotril-app`, `europe-west1`, 2GB, scale-to-zero, image `gotenberg/gotenberg:8`, URL `https://gotenberg-975472873234.europe-west1.run.app`). Conversion verified against the real SABER DOCX (native charts + tables preserved, ~1.18 MB, ~17-30s cold). **Secured via Cloud Run IAM**: service is `--no-allow-unauthenticated` (public `allUsers` invoker binding removed); a dedicated SA `vercel-gotenberg@jotril-app` has `roles/run.invoker`; the convert route mints a Google ID token from `GCP_SA_KEY` (base64 SA JSON) per request — verified the locked service returns 403 without a token and 200 with the minted token. **Gotenberg has NO built-in basic auth** (the earlier `--api-enable-basic-auth` attempt crashed the container — don't retry it). Remaining: set `GCP_SA_KEY` + `GOTENBERG_URL` + `NEXT_PUBLIC_REPORT_FIDELITY_ENGINE=gotenberg` in Vercel and redeploy; restart local dev to load them; then in-app end-to-end test. Cold-start cost is borne by the convert route (`maxDuration=60`).
+- **PDF report engine fully rebuilt (the old output had no images/tables, broken spacing/page-breaks).** Root cause was `pdfmake` + `html-to-pdfmake` (lossy converter that drops `<img>`, collapses `<table>`, ignores CSS spacing/`page-break-*`). Replaced with a **headless-Chrome HTML→PDF engine** — see new §19. The old `pdf-generator.js` is now a deprecated shim. In-app `ScoreGauge`/`HeatmapViewer` were redesigned to match the report (donut gauge; human text left unmarked, AI/mixed highlighted). Build verified (`/api/report` route + serverless externalization). **DOCX (table+image) fidelity verified end-to-end on 2026-06-21** by rendering a real 163-image/23-table report — but ONLY once `sourceHtml` actually reaches the renderer; see the `ScanResult.sourceHtml` entry below for the persistence gap that made early past-scan downloads fall back to text-only chunk reconstruction.
+- **`file-parser.js` PDF parsing was broken** — called `require('pdf-parse')()` but v2 exports a `PDFParse` class (no callable default). Fixed to `new PDFParse({ data }).getText()`.
+- **`ScanResult.sourceHtml` column added** (Text?, ≤2MB) so past-scan downloads keep DOCX tables/images. ✅ **`npx prisma db push` was run against the live DB on 2026-06-21 — the column now exists and the client knows the field (verified).** New scans persist `sourceHtml`; past-scan downloads render full fidelity. ⚠️ **Rows saved *before* the push have `sourceHtml = null` and do NOT backfill** — re-scan the file to get a high-fidelity PDF (or download from the fresh-result button, which uses the in-memory HTML and never needed the DB). After running the push, **restart the dev server** — a running server keeps the old generated Prisma client in memory (and locks `query_engine-windows.dll.node`, which is why the push's auto-`generate` showed a harmless EPERM rename error; the client code still regenerated).
+  - **Root cause of the "poor report" reports (diagnosed 2026-06-21):** before the push the column didn't exist, so `POST /api/scan-results` hit its graceful fallback ([route.js:102-106](src/app/api/scan-results/route.js:102)) and re-saved **without** `sourceHtml` → every persisted scan had null HTML → `POST /api/report` with `{scanId}` fell back to `reconstructBody(chunks)` (text-only `<p>` blocks, no images, flattened tables). Confirmed by rendering a real 163-image/23-table DOCX (mammoth output 0.73 MB, well under both the 8 MB report cap and 2 MB DB cap) through the actual engine: with `sourceHtml` present it embeds all 163 images + real table grids + chart figures (4.4 MB PDF). The engine was never the bug — the missing column was.
+- **⚠️ Local `.env.local` contains `VERCEL="1"`** (from `vercel env pull`). The report renderer therefore detects the browser by *presence* (local Chrome/Edge → @sparticuz/chromium fallback) rather than `VERCEL`/`AWS_*` env flags, which would mis-route dev to the Linux serverless binary.
+
 ### Fixed 2026-06-20
 - **BLOCKER: SyntaxError in queue-manager.js line 179** — `console.warn([Auto-Sweeper] Downscaling concurrency gracefully to: )` was invalid JS. Crashed entire client bundle via `QueueSidebar → DevDebugOverlay → Providers → layout.js`. Fixed: proper template literal.
 - **BLOCKER: `enqueueJob` method missing** — `JotrilQueueManager` had no `enqueueJob`. `useAnalyze.js` called it. App appeared to work until analysis was triggered, then `TypeError: QueueManager.enqueueJob is not a function`. Fixed: implemented full method.
@@ -490,7 +537,7 @@ Design language: glassmorphism (`backdrop-filter: blur(24px)`), gradient buttons
 
 1. **Never import `queue-manager.js` from a server component.** It uses `crypto.randomUUID()`, `fetch`, and browser-only patterns. It's a client-only module.
 
-2. **`QueueSidebar` and `DevDebugOverlay` import QueueManager at the TOP LEVEL** — any parse error in `queue-manager.js` crashes the entire app. Always validate the file compiles before saving.
+2. **`QueueSidebar` imports QueueManager at the TOP LEVEL** — any parse error in `queue-manager.js` crashes the entire app. Always validate the file compiles before saving. (`DevDebugOverlay` also imports it, but is now lazy-loaded + dev-gated via `Providers`, so it's out of the global bundle — see §9/§15.)
 
 3. **The gradio proxy body must be a string, not an object.** Always `JSON.stringify` before passing to `secureFetch`. The proxy does NOT auto-serialize.
 
@@ -514,6 +561,8 @@ Design language: glassmorphism (`backdrop-filter: blur(24px)`), gradient buttons
 
 13. **`/api/gradio-proxy` calls = Vercel Function Invocations.** Current plan is **Hobby (free) = 1M/month** (NOT a daily limit; exhaustion PAUSES the whole deployment). Hobby is also **non-commercial-only** — Jotril is commercial, so Pro is required before public launch. Budget is governed server-side via `UsageBudget`/budget-governor (§14/§15).
 
+14. **NEVER hand-set `Content-Length` on a binary `NextResponse` (PDF/file downloads).** It collides with the dev server's chunked transfer encoding → **browsers read 0 bytes** while Node's `fetch` reads the full body (so server-side tests pass and hide it). Return `new NextResponse(new Uint8Array(buf), { headers: { 'Content-Type', 'Content-Disposition', 'Cache-Control' } })` and let the platform set the length. To repro download bugs use `curl` (honors `Content-Length` like a browser), not node `fetch` (lenient). See §15 (0-byte downloads).
+
 ---
 
 ## 17. Commit History Context (recent)
@@ -536,3 +585,38 @@ After every session where code changes are made:
 3. Update §8 if proxy or service logic changes
 4. Add a row to §17 (Commit History) for significant changes
 5. Update the "Last updated" date at the top
+
+---
+
+## 19. PDF Report Engine (rebuilt 2026-06-21)
+
+**Goal:** premium, faithful PDF reports — real tables/images, proper spacing & page-breaks — beating Turnitin on both fidelity and design. Engine = **headless Chrome** (renders an HTML/CSS template to PDF), chosen for pixel-perfect output + one-click download.
+
+**Flow:**
+```
+"Download PDF" → downloadReport() [src/lib/download-report.js]
+  ├─ PDF upload (File in hand) → overlayPDFReport() [pdf-overlay.js]: highlight original
+  │                               in-place (pdf-lib) + prepend cover from /api/report?cover=1
+  ├─ DOCX fresh scan + NEXT_PUBLIC_REPORT_FIDELITY_ENGINE=gotenberg (File in hand)
+  │     → POST /api/report/convert (DOCX→PDF via Gotenberg/LibreOffice) → overlayPDFReport()
+  │       [native charts/tables/formatting preserved]. 501/failure → falls through ↓
+  └─ DOCX / text / past scan    → POST /api/report → headless Chrome → PDF blob → download
+```
+Highlight mapping for the overlay path is WORD-LEVEL resyncing (`pdf-overlay.js`
+`mapChunksToItems`): non-chunk PDF text (table cells exempt from scoring, page
+numbers, repeated headers) stays unhighlighted and never desyncs prose. The
+fidelity path is dormant until `GOTENBERG_URL` (server) + the public flag are set
+— recommended host Google Cloud Run (EU, 2GB, scale-to-zero). See §15.
+
+**Pieces:**
+- `src/lib/report/design-system.js` — tokens (brand navy/green, score colours), Inter (Google Fonts), `assessmentFor`, `donutSvg`, `escapeHtml`. Mirrors `globals.css`.
+- `src/lib/report/report-template.js` — `buildReportHtml(data)`: self-contained HTML + print CSS (cover/scorecard, donut exec-summary, document body, methodology, verification footer). Tables use `thead{display:table-header-group}` + `tr{break-inside:avoid}`; sections `break-before:page`. Also exports `headerFooterTemplates` (puppeteer running header/footer + page numbers).
+- `src/lib/report/highlight-injector.js` — `injectHighlights(chunks)` runs **inside the page via `page.evaluate`** (real DOM); ports the char-alignment mapper to wrap AI/mixed runs in `<mark>`. Used for the DOCX `sourceHtml` body; the text/past-scan body is reconstructed with marks baked in.
+- `src/lib/report/render.js` — `renderReportPdf(data)`: resolves Chrome (local exe in dev → `@sparticuz/chromium` on Vercel, by presence not env flags), **request-interception locks the page to data:/font URLs only** (SSRF / local-file safety), `page.pdf()` A4 with header/footer.
+- `src/app/api/report/route.js` — `runtime='nodejs'`, `maxDuration=60`. POST `{scanId}` (auth + ownership; fetches `sourceHtml`) or inline payload (guests OK); `?cover=1` = single cover page. Size caps: sourceHtml ≤8MB (else reconstruct), chunks ≤50k.
+- `src/app/api/report/convert/route.js` (NEW) — `runtime='nodejs'`, `maxDuration=60`. POST multipart `file` (DOCX) → proxies to `GOTENBERG_URL/forms/libreoffice/convert` (+ optional `GOTENBERG_AUTH` header) → returns faithful PDF. **501 when `GOTENBERG_URL` unset** (client falls back). 25MB cap. The high-fidelity DOCX path; pairs with `overlayPDFReport`.
+
+**Gotchas:**
+- `next.config.mjs` adds `puppeteer-core` + `@sparticuz/chromium` to `serverExternalPackages`, traces the chromium bin via `outputFileTracingIncludes['/api/report']`, and aliases `canvas` → `src/lib/empty-module.js` (Turbopack) so pdfjs-dist's `require("canvas")` doesn't break the client build.
+- Data shape: `chunks=[{text,label('human'|'mixed'|'ai'),score,para}]`, `breakdown={human,mixed,ai}` (string %), `overallLabel`, `sourceHtml` (DOCX only).
+- If the headless render fails in prod, verify the chromium binary was traced (size limit) — consider `@sparticuz/chromium-min` + remote brotli pack.

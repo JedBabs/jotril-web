@@ -67,26 +67,44 @@ export async function POST(req) {
         }
 
         const body = await req.json();
-        const { filename, type, wordCount, sentenceCount, overallLabel, breakdown, chunks } = body;
+        const { filename, type, wordCount, sentenceCount, overallLabel, breakdown, chunks, sourceHtml } = body;
 
         if (!Array.isArray(chunks) || chunks.length === 0 || !overallLabel) {
             return NextResponse.json({ error: 'Invalid scan payload' }, { status: 400 });
         }
 
+        // Persist the reproduced document HTML so past-scan downloads keep full
+        // fidelity (tables/images). Capped so a huge base64-image-laden DOCX
+        // can't bloat the DB — oversized sources fall back to chunk reconstruction.
+        const MAX_SOURCE_HTML = 2_000_000; // ~2MB
+        const storedHtml = (typeof sourceHtml === 'string' && sourceHtml.length <= MAX_SOURCE_HTML)
+            ? sourceHtml
+            : null;
+
         const prisma = getPrisma();
-        const saved = await prisma.scanResult.create({
-            data: {
-                userId: session.user.id,
-                filename: filename || 'Pasted Text',
-                type: type === 'DOCUMENT' ? 'DOCUMENT' : 'TEXT',
-                wordCount: Number(wordCount) || 0,
-                sentenceCount: Number(sentenceCount) || chunks.length,
-                overallLabel,
-                breakdown: breakdown || {},
-                chunks, // full per-sentence chunks — needed to regenerate the PDF report
-            },
-            select: { id: true, createdAt: true },
-        });
+        const baseData = {
+            userId: session.user.id,
+            filename: filename || 'Pasted Text',
+            type: type === 'DOCUMENT' ? 'DOCUMENT' : 'TEXT',
+            wordCount: Number(wordCount) || 0,
+            sentenceCount: Number(sentenceCount) || chunks.length,
+            overallLabel,
+            breakdown: breakdown || {},
+            chunks, // full per-sentence chunks — needed to regenerate the PDF report
+        };
+
+        let saved;
+        try {
+            saved = await prisma.scanResult.create({
+                data: { ...baseData, sourceHtml: storedHtml },
+                select: { id: true, createdAt: true },
+            });
+        } catch (e) {
+            // Graceful fallback for deployments where `prisma db push` hasn't yet
+            // added the sourceHtml column — history still works (without DOCX fidelity).
+            console.warn('[ScanResults] save with sourceHtml failed; retrying without it:', e?.message);
+            saved = await prisma.scanResult.create({ data: baseData, select: { id: true, createdAt: true } });
+        }
 
         return NextResponse.json({ id: saved.id, createdAt: saved.createdAt });
     } catch (error) {

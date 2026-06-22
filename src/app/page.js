@@ -505,21 +505,24 @@ export default function Home() {
                                         whileHover={{ scale: 1.03, y: -2 }}
                                         whileTap={{ scale: 0.98 }}
                                         onClick={async () => {
-                                            openProcess("download", "Generating PDF", "Compiling styles & layout...");
+                                            const controller = new AbortController();
+                                            openProcess("download", "Generating PDF", "Compiling styles & layout...", () => controller.abort());
                                             simulateProgress([
                                                 { progress: 30, duration: 300, step: "Extracting Document Hierarchy..." },
                                                 { progress: 70, duration: 400, step: "Applying Analytics Markup..." }
                                             ]);
                                             try {
-                                                const { generatePDFReport: libGen } = await import("@/lib/pdf-generator");
-                                                libGen({
+                                                const { downloadReport } = await import("@/lib/download-report");
+                                                await downloadReport({
+                                                    file: scannedFile,
                                                     filename: scannedFile ? scannedFile.name : 'Text_Scan',
                                                     breakdown,
                                                     overallLabel,
                                                     chunks: results,
                                                     sentenceCount: results.length,
                                                     wordCount: results.reduce((s, c) => s + c.text.trim().split(/\s+/).length, 0),
-                                                    sourceHtml
+                                                    sourceHtml,
+                                                    signal: controller.signal
                                                 });
                                             } finally {
                                                 closeProcess();

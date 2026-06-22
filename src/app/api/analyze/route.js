@@ -2,8 +2,26 @@ export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '../auth/[...nextauth]/route';
-import { extractTextFromDocument, extractHtmlFromDocument } from '@/lib/file-parser';
+import { extractTextFromDocument, extractHtmlFromDocument, htmlToProseText } from '@/lib/file-parser';
 import { resolveScan } from '@/lib/budget-governor';
+import {
+    hashFingerprint, hashText, estimateCost, checkCache, checkQuota,
+    recordQuotaUsage, hashIp, checkIpFloodGate, recordIpRequest,
+} from '@/lib/quota-manager';
+
+/** First hop in X-Forwarded-For (Vercel sets it); falls back to X-Real-IP. */
+function getClientIp(req) {
+    const xff = req.headers.get('x-forwarded-for');
+    if (xff) return xff.split(',')[0].trim();
+    return req.headers.get('x-real-ip') || 'unknown';
+}
+
+/** Safely parse the client-supplied hardware vector from the multipart body. */
+function parseFootprint(formData) {
+    const raw = formData.get('hardwareFootprint');
+    if (!raw) return {};
+    try { return JSON.parse(raw); } catch { return {}; }
+}
 
 export async function POST(req) {
     try {
@@ -16,8 +34,17 @@ export async function POST(req) {
         if (file) {
             fileName = file.name;
             const buffer = Buffer.from(await file.arrayBuffer());
-            text = await extractTextFromDocument(buffer, file.type);
             sourceHtml = await extractHtmlFromDocument(buffer, file.type);
+            // DOCX: score the prose only — table content is exempt from analysis
+            // (derived from the reproduced HTML with tables stripped, so it isn't
+            // scored, counted in the breakdown, or highlighted). PDFs/TXT have no
+            // sourceHtml and fall through to plain extraction unchanged.
+            if (sourceHtml) {
+                text = htmlToProseText(sourceHtml);
+            }
+            if (!text || !text.trim()) {
+                text = await extractTextFromDocument(buffer, file.type);
+            }
         }
 
         if (!text || text.trim().length === 0) {
@@ -29,8 +56,54 @@ export async function POST(req) {
         // scenarios, and reserves the estimated invocation budget.
         const session = await getServerSession(authOptions);
         const tier = session?.user?.role || 'UNAUTHENTICATED';
+        const userId = session?.user?.id || null;
+        const isAuthed = !!userId;
+
+        // ── Abuse gate ────────────────────────────────────────────────────
+        // This is the binding quota enforcement for the web flow (the old
+        // /api/estimate check was advisory-only and recorded nothing, so the
+        // limits were never reachable). We gate HERE because /api/analyze is
+        // what triggers the client-side HF queries — charging up-front closes
+        // the bypass where a client simply never calls /api/attribute.
+        const deviceHash = await hashFingerprint(parseFootprint(formData));
+        const type = file ? 'DOCUMENT' : 'TEXT';
+        const contentSize = file ? file.size : text.length;
+        const { sentenceCount } = estimateCost(text);
+        const textHashValue = await hashText(text);
+
+        // Same text within 24h by this identity → free re-scan (no double-charge).
+        const cached = await checkCache(textHashValue, deviceHash, userId);
+
+        let charge = null; // { pointCost, purchasedDeficit } when we must record usage
+        if (!cached) {
+            // Generous per-IP/hour flood breaker — unauthenticated only, so a shared
+            // school network never throttles signed-in users (see quota-manager).
+            const ipHash = isAuthed ? null : await hashIp(getClientIp(req));
+            if (!isAuthed) {
+                const flood = await checkIpFloodGate(ipHash);
+                if (!flood.allowed) {
+                    return NextResponse.json({ error: flood.reason }, { status: 429 });
+                }
+            }
+
+            const quota = await checkQuota(tier, deviceHash, userId, type, contentSize, sentenceCount);
+            if (!quota.allowed) {
+                return NextResponse.json({ error: quota.reason }, { status: 429 });
+            }
+            charge = { pointCost: quota.pointCost, purchasedDeficit: quota.purchasedDeficit || 0, ipHash };
+        }
 
         const plan = await resolveScan({ tier, text });
+
+        // Commit usage only after the scan plan is resolved (so a governor failure
+        // doesn't burn quota). Best-effort: a record failure must not block results.
+        if (charge) {
+            await recordQuotaUsage(
+                deviceHash, userId, type, contentSize,
+                charge.pointCost, sentenceCount, textHashValue, charge.purchasedDeficit,
+            ).catch(err => console.error('[Analyze] quota record failed:', err));
+            if (!isAuthed) await recordIpRequest(charge.ipHash, text.length);
+        }
 
         return NextResponse.json({
             // The multi-scale windows the client must query (full text retained — the

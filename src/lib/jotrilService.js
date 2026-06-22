@@ -12,8 +12,6 @@ export const SPACES = [
     'JedBabs/Jotril-Space-3'
 ];
 
-let currentIndex = 0;
-
 /**
  * The HF model emits human-facing labels ("AI GENERATED" / "HUMAN WRITTEN").
  * The heatmap pipeline (useAnalyze.processFinalResults) keys strictly off the
@@ -46,8 +44,23 @@ export const proxyStats = { calls: 0 };
 /**
  * Proxy Wrapper fetching tool.
  */
-async function secureFetch(targetUrl, options) {
+async function secureFetch(targetUrl, options = {}) {
     proxyStats.calls++;
+
+    // Server-side callers (auto-tuner buildScoreCache in an `after()` hook, keep-awake
+    // cron) have no browser origin, so a relative '/api/gradio-proxy' URL throws
+    // "Failed to parse URL from /api/gradio-proxy". The proxy's only job is to hide
+    // HF_TOKEN from the browser — moot on the server, which already holds the token —
+    // so call the HF Space directly with the token injected.
+    if (typeof window === 'undefined') {
+        const headers = { ...(options.headers || {}) };
+        if (process.env.HF_TOKEN) {
+            headers['Authorization'] = `Bearer ${process.env.HF_TOKEN}`;
+        }
+        return fetch(targetUrl, { ...options, headers });
+    }
+
+    // Client-side: route through the Edge proxy so HF_TOKEN never reaches the browser.
     return fetch('/api/gradio-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -228,11 +241,12 @@ export async function queryJotrilModel(text, spaceName) {
 export async function predictBatch(texts, onProgress = null, checkCancel = null, concurrency = 10, batchDelay = 50) {
     const results = new Array(texts.length).fill(null);
     let completedCount = 0;
+    let localIndex = 0;
 
     const worker = async () => {
-        while (currentIndex < texts.length) {
+        while (localIndex < texts.length) {
             if (checkCancel) await checkCancel();
-            const idx = currentIndex++;
+            const idx = localIndex++;
             const text = texts[idx];
 
             if (batchDelay > 0) {

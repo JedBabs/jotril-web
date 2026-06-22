@@ -60,6 +60,11 @@ class JotrilQueueManager {
     }
 
     cancelJob(jobId) {
+        // Mark the job cancelled BEFORE removing it. A worker may already be awaiting
+        // an in-flight query for this job; it holds a reference to the job object, so
+        // the flag lets _runWorkerLoop skip the completion callback when it returns.
+        const job = this.activeJobs.get(jobId);
+        if (job) job.cancelled = true;
         this.activeJobs.delete(jobId);
         this.queue = this.queue.filter(j => j.jobId !== jobId);
         this._notify();
@@ -164,6 +169,12 @@ class JotrilQueueManager {
             }
 
             this._notify();
+
+            // Job was cancelled mid-flight — stop touching it, don't sweep or callback.
+            if (parentJob.cancelled) {
+                this.activeJobs.delete(chunkJob.jobId);
+                continue;
+            }
 
             // Finish check with Auto-Sweeper array parity
             if (parentJob.completedChunks >= parentJob.totalChunks) {

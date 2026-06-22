@@ -2,10 +2,20 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
 
+// Human text is left unmarked (matches the PDF report); only AI / mixed are
+// highlighted so the eye goes straight to the flagged passages.
 const labelConfig = {
-    human: { bg: "bg-score-human/25", hover: "hover:bg-score-human/40", dot: "bg-score-human", text: "Human Written", glow: "shadow-[0_0_12px_rgba(16,185,129,0.4)]" },
-    mixed: { bg: "bg-score-mixed/35", hover: "hover:bg-score-mixed/50", dot: "bg-score-mixed", text: "Mixed", glow: "shadow-[0_0_12px_rgba(245,158,11,0.5)]" },
-    ai: { bg: "bg-score-ai/45", hover: "hover:bg-score-ai/60", dot: "bg-score-ai", text: "AI Generated", glow: "shadow-[0_0_12px_rgba(239,68,68,0.6)]" },
+    human: { mark: false, dot: "bg-score-human", text: "Human Written" },
+    mixed: {
+        mark: true, dot: "bg-score-mixed", text: "Mixed Signals",
+        style: { backgroundColor: "rgba(245,158,11,0.22)", color: "var(--dyn-text-navy)" },
+        hover: "rgba(245,158,11,0.40)",
+    },
+    ai: {
+        mark: true, dot: "bg-score-ai", text: "AI Generated",
+        style: { backgroundColor: "rgba(239,68,68,0.20)", color: "var(--dyn-text-navy)" },
+        hover: "rgba(239,68,68,0.38)",
+    },
 };
 
 export default function HeatmapViewer({ chunks, devMode = false, previewLimit = 100, previewSentences = 40 }) {
@@ -14,28 +24,21 @@ export default function HeatmapViewer({ chunks, devMode = false, previewLimit = 
 
     const handleMouseMove = (e, chunk) => {
         setHoveredChunk(chunk);
-        const rect = e.currentTarget.closest('.heatmap-container')?.getBoundingClientRect();
-        if (rect) {
-            setTooltipPos({
-                x: e.clientX - rect.left,
-                y: e.clientY - rect.top
-            });
-        }
+        const rect = e.currentTarget.closest(".heatmap-container")?.getBoundingClientRect();
+        if (rect) setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
     };
 
     if (!chunks || chunks.length === 0) return null;
 
-    const humanCount = chunks.filter(c => c.label === 'human').length;
-    const mixedCount = chunks.filter(c => c.label === 'mixed').length;
-    const aiCount = chunks.filter(c => c.label === 'ai').length;
+    const humanCount = chunks.filter((c) => c.label === "human").length;
+    const mixedCount = chunks.filter((c) => c.label === "mixed").length;
+    const aiCount = chunks.filter((c) => c.label === "ai").length;
 
-    // For long documents, render only a leading preview inline and direct the user to the
-    // full PDF report (the heatmap of thousands of spans is slow and unwieldy on-screen).
+    // Long documents: render a leading preview inline; the full heatmap lives in the PDF.
     const truncated = chunks.length > previewLimit;
     const visibleChunks = truncated ? chunks.slice(0, previewSentences) : chunks;
 
-    // Group consecutive chunks by their source paragraph so the original spacing/structure
-    // is preserved (chunk.para = paragraph index from the engine; falls back to one block).
+    // Group consecutive sentences by source paragraph to preserve spacing.
     const paragraphs = [];
     let currentPara = null;
     visibleChunks.forEach((chunk, i) => {
@@ -49,37 +52,56 @@ export default function HeatmapViewer({ chunks, devMode = false, previewLimit = 
 
     return (
         <div className="space-y-5">
-            {/* Legend Bar */}
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3 glass-card !rounded-xl">
-                <span className="text-xs font-bold text-ash uppercase tracking-widest">Legend</span>
-                {[
-                    { color: "bg-score-human/30", label: "Human", count: humanCount },
-                    { color: "bg-score-mixed/30", label: "Mixed", count: mixedCount },
-                    { color: "bg-score-ai/30", label: "AI", count: aiCount },
-                ].map((item) => (
-                    <div key={item.label} className="flex items-center gap-2">
-                        <div className={`w-3 h-3 rounded-sm ${item.color}`} />
-                        <span className="text-xs text-ash font-medium">{item.label} ({item.count})</span>
-                    </div>
-                ))}
+            {/* Header + legend */}
+            <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4 glass-card !rounded-2xl">
+                <h4 className="text-sm font-black text-navy tracking-tight">Sentence-Level Heatmap</h4>
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                    {[
+                        { color: "bg-score-human", label: "Human", count: humanCount },
+                        { color: "bg-score-mixed", label: "Mixed", count: mixedCount },
+                        { color: "bg-score-ai", label: "AI", count: aiCount },
+                    ].map((item) => (
+                        <div key={item.label} className="flex items-center gap-2">
+                            <div className={`w-3 h-3 rounded-md ${item.color}`} />
+                            <span className="text-xs font-semibold text-ash">
+                                {item.label} <span className="text-navy font-bold">({item.count})</span>
+                            </span>
+                        </div>
+                    ))}
+                </div>
             </div>
 
-            {/* Heatmap Text Body — grouped into paragraphs to preserve original spacing */}
-            <div className="relative heatmap-container p-6 md:p-8 glass-card !rounded-2xl leading-[2] text-[15px] font-normal text-navy">
+            {/* Heatmap body — grouped into paragraphs to preserve original spacing */}
+            <div className="relative heatmap-container p-6 md:p-9 glass-card !rounded-2xl leading-[2.1] text-[15px] text-navy">
                 {paragraphs.map((para, pi) => (
                     <p key={pi} className="mb-4 last:mb-0">
                         {para.items.map(({ chunk, i }) => {
                             const config = labelConfig[chunk.label] || labelConfig.mixed;
+                            const isHovered = hoveredChunk === chunk;
+                            if (!config.mark) {
+                                // Human — plain, but still hoverable for the tooltip.
+                                return (
+                                    <span
+                                        key={i}
+                                        className="cursor-default transition-colors duration-150"
+                                        style={isHovered ? { backgroundColor: "rgba(37,99,235,0.12)", borderRadius: 6 } : undefined}
+                                        onMouseMove={(e) => handleMouseMove(e, chunk)}
+                                        onMouseLeave={() => setHoveredChunk(null)}
+                                    >
+                                        {chunk.text}{" "}
+                                    </span>
+                                );
+                            }
                             return (
                                 <motion.span
                                     key={i}
                                     initial={{ opacity: 0 }}
                                     animate={{ opacity: 1 }}
-                                    transition={{ delay: Math.min(i * 0.02, 1) }}
-                                    className={`px-0.5 mx-0.5 rounded-md cursor-pointer transition-all duration-150 inline ${hoveredChunk === chunk
-                                        ? `bg-accent-blue/20 text-navy ring-1 ring-accent-blue/30 ${config.glow}`
-                                        : `${config.bg} ${config.hover}`
-                                        }`}
+                                    transition={{ delay: Math.min(i * 0.015, 0.8) }}
+                                    className="px-1 py-0.5 mx-px rounded-md cursor-pointer transition-all duration-150 inline ring-1 ring-transparent"
+                                    style={isHovered
+                                        ? { backgroundColor: config.hover, boxShadow: "0 0 0 1px rgba(37,99,235,0.25)" }
+                                        : config.style}
                                     onMouseMove={(e) => handleMouseMove(e, chunk)}
                                     onMouseLeave={() => setHoveredChunk(null)}
                                 >
@@ -90,7 +112,7 @@ export default function HeatmapViewer({ chunks, devMode = false, previewLimit = 
                     </p>
                 ))}
 
-                {/* Glassmorphism Tooltip */}
+                {/* Glassmorphism tooltip */}
                 <AnimatePresence>
                     {hoveredChunk && (
                         <motion.div
@@ -99,17 +121,17 @@ export default function HeatmapViewer({ chunks, devMode = false, previewLimit = 
                             exit={{ opacity: 0, scale: 0.9 }}
                             transition={{ duration: 0.1 }}
                             className="absolute pointer-events-none z-50 glass-card !rounded-xl px-4 py-3"
-                            style={{
-                                top: tooltipPos.y - 55,
-                                left: Math.min(Math.max(tooltipPos.x - 40, 10), 300)
-                            }}
+                            style={{ top: tooltipPos.y - 55, left: Math.min(Math.max(tooltipPos.x - 40, 10), 300) }}
                         >
                             <div className="flex flex-col gap-2">
                                 <div className="flex items-center gap-3">
-                                    <div className={`w-3 h-3 rounded-full ${labelConfig[hoveredChunk.label]?.dot || 'bg-score-mixed'} animate-pulse`} />
+                                    <div className={`w-3 h-3 rounded-full ${labelConfig[hoveredChunk.label]?.dot || "bg-score-mixed"} animate-pulse`} />
                                     <span className="text-sm font-bold text-navy">
-                                        {labelConfig[hoveredChunk.label]?.text || 'Mixed'}
+                                        {labelConfig[hoveredChunk.label]?.text || "Mixed"}
                                     </span>
+                                    {typeof hoveredChunk.score === "number" && (
+                                        <span className="text-xs font-bold text-ash ml-auto">{Math.round(hoveredChunk.score)}% AI</span>
+                                    )}
                                 </div>
                                 {devMode && hoveredChunk.devMetrics && (
                                     <div className="pt-2 mt-1 border-t border-silver/50 space-y-1 min-w-[140px]">
@@ -134,10 +156,10 @@ export default function HeatmapViewer({ chunks, devMode = false, previewLimit = 
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     <p className="text-sm text-navy">
-                        This document has <span className="font-bold">{chunks.length}</span> sentences — showing the first{' '}
-                        <span className="font-bold">{visibleChunks.length}</span> here for readability. Use the{' '}
-                        <span className="font-bold">Download PDF Report</span> button above to view the complete
-                        sentence-by-sentence heatmap.
+                        This document has <span className="font-bold">{chunks.length}</span> sentences — showing the first{" "}
+                        <span className="font-bold">{visibleChunks.length}</span> here for readability. Use the{" "}
+                        <span className="font-bold">Download PDF Report</span> button above for the complete,
+                        formatted sentence-by-sentence analysis.
                     </p>
                 </div>
             )}

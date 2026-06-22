@@ -18,84 +18,45 @@ export async function GET(req) {
         const prisma = getPrisma();
         const userId = session.user.id;
 
-        // Dev Admin: ensure the DB user exists (in case they haven't re-logged since the update)
-        if (userId === 'dev-admin-id') {
-            await prisma.user.upsert({
-                where: { id: 'dev-admin-id' },
-                update: {},
-                create: {
-                    id: 'dev-admin-id',
-                    name: 'Dev Admin',
-                    email: 'dev@antigravity.local',
-                    role: 'ADMIN',
-                    emailVerified: new Date(),
+        // NOTE: the dev-admin user row is created at login (authorize() in the NextAuth
+        // config), so we no longer upsert it here — that was a redundant sequential
+        // write on every dashboard load. If the row is ever missing, the reads below
+        // just return zeros/null until the next sign-in recreates it (no crash).
+
+        // Only the reads the dashboard UI actually renders, in one parallel wave.
+        // (Dropped: apiKey.count and the QuotaUsage "recent activity" findMany — both
+        // were fetched but never displayed; the "Previous Uploads" table uses
+        // pastScanResults. This takes the request from 6 reads + 1 write to 4 reads.)
+        const [totalRequests, totalPoints, user, pastScanResults] = await Promise.all([
+            prisma.quotaUsage.count({ where: { userId } }),
+            prisma.quotaUsage.aggregate({ _sum: { pointsCost: true }, where: { userId } }),
+            prisma.user.findUnique({
+                where: { id: userId },
+                select: { role: true, purchasedPoints: true, email: true }
+            }),
+            prisma.scanResult.findMany({
+                where: { userId },
+                orderBy: { createdAt: 'desc' },
+                take: 10,
+                select: {
+                    id: true,
+                    filename: true,
+                    type: true,
+                    wordCount: true,
+                    sentenceCount: true,
+                    overallLabel: true,
+                    breakdown: true,
+                    createdAt: true,
                 }
-            });
-        }
-
-        // Total analysis requests
-        const totalRequests = await prisma.quotaUsage.count({
-            where: { userId }
-        });
-
-        // Total points spent (all time)
-        const totalPoints = await prisma.quotaUsage.aggregate({
-            _sum: { pointsCost: true },
-            where: { userId }
-        });
-
-        // API key count
-        const keyCount = await prisma.apiKey.count({
-            where: { userId }
-        });
-
-        // User details
-        const user = await prisma.user.findUnique({
-            where: { id: userId },
-            select: { role: true, purchasedPoints: true, email: true, name: true, createdAt: true }
-        });
-
-        // Recent activity
-        const recentScans = await prisma.quotaUsage.findMany({
-            where: { userId },
-            orderBy: { createdAt: 'desc' },
-            take: 10,
-            select: {
-                id: true,
-                type: true,
-                pointsCost: true,
-                createdAt: true,
-                size: true
-            }
-        });
-
-        // Past scan results — exclude massive 'chunks' JSON to keep response lightweight
-        const pastScanResults = await prisma.scanResult.findMany({
-            where: { userId },
-            orderBy: { createdAt: 'desc' },
-            take: 10,
-            select: {
-                id: true,
-                filename: true,
-                type: true,
-                wordCount: true,
-                sentenceCount: true,
-                overallLabel: true,
-                breakdown: true,
-                createdAt: true,
-            }
-        });
+            }),
+        ]);
 
         return NextResponse.json({
             totalRequests,
             totalPointsSpent: totalPoints._sum.pointsCost || 0,
-            keyCount,
             tier: user?.role || 'FREE',
             purchasedPoints: user?.purchasedPoints || 0,
             email: user?.email,
-            name: user?.name,
-            memberSince: user?.createdAt,
-            recentScans,
             pastScanResults
         });
     } catch (error) {

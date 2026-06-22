@@ -46,49 +46,94 @@ async function extractPDFLayout(arrayBuffer) {
 }
 
 /**
- * Maps Jotril AI sentence chunks to PDF spatial items using robust sliding window character alignment.
+ * Maps Jotril AI sentence chunks to PDF spatial items via resyncing WORD-level
+ * alignment, then labels each item by majority vote (so highlights are
+ * word/item-atomic — never half a word).
+ *
+ * Word-level (not char-level) matching is what makes this robust: the chunk
+ * pointer advances only when a whole PDF word matches the chunk word stream, so
+ * stray letters can't spuriously resync. Any PDF text NOT in the analysed
+ * chunks — table cells (exempt from scoring), page numbers, repeated
+ * headers/footers LibreOffice emits — fails to match, is labelled 'human'
+ * (unhighlighted), and does NOT consume chunk positions, so prose after a table
+ * stays in sync. A bounded window absorbs occasional dropped/extra words.
  */
 function mapChunksToItems(pagesItems, chunks) {
     const flatItems = pagesItems.flat();
-    const fullPDFText = flatItems.map(i => i.text).join('').replace(/\s+/g, '');
-    const chunkMap = [];
+    const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/gi, '');
 
-    // Flatten chunks into a continuous character array with labels
+    // Chunk word stream (prose only), each word carrying its sentence's label.
+    const cWords = [];
     for (const chunk of chunks) {
-        const cleanChunk = chunk.text.replace(/\s+/g, '');
-        for (let i = 0; i < cleanChunk.length; i++) {
-            chunkMap.push(chunk.label);
+        const label = chunk.label || 'human';
+        for (const raw of String(chunk.text || '').split(/\s+/)) {
+            const w = norm(raw);
+            if (w) cWords.push({ w, label });
         }
     }
+    const N = cWords.length;
+    const RESYNC_WINDOW = 12;
 
-    // Assign labels back to items
-    let globalCharIndex = 0;
+    let wp = 0;
+    const labelWord = (pw) => {
+        if (!pw) return null; // punctuation-only token — doesn't vote
+        if (wp < N && cWords[wp].w === pw) { const l = cWords[wp].label; wp++; return l; }
+        const maxK = Math.min(RESYNC_WINDOW, N - wp);
+        for (let k = 1; k < maxK; k++) {
+            if (cWords[wp + k].w === pw) { const l = cWords[wp + k].label; wp += k + 1; return l; }
+        }
+        return 'human'; // PDF-only word (table cell / header / page number)
+    };
+
     for (const item of flatItems) {
-        const cleanText = item.text.replace(/\s+/g, '');
-        if (cleanText.length === 0) continue;
-
-        // Peak matching (if sync gets lost we resync later natively)
-        const itemLabels = chunkMap.slice(globalCharIndex, globalCharIndex + cleanText.length);
-
-        // Majority voting for the bounding box
-        const humanC = itemLabels.filter(l => l === 'human').length;
-        const aiC = itemLabels.filter(l => l === 'ai').length;
-        const mixedC = itemLabels.filter(l => l === 'mixed').length;
-
-        if (aiC > humanC && aiC >= mixedC) item.label = 'ai';
-        else if (mixedC > humanC) item.label = 'mixed';
-        else item.label = 'human';
-
-        globalCharIndex += cleanText.length;
+        let h = 0, mx = 0, ai = 0, voted = 0;
+        for (const raw of String(item.text || '').split(/\s+/)) {
+            const l = labelWord(norm(raw));
+            if (l === null) continue;
+            voted++;
+            if (l === 'ai') ai++; else if (l === 'mixed') mx++; else h++;
+        }
+        item.label = voted === 0 ? 'human'
+            : (ai >= mx && ai >= h && ai > 0) ? 'ai'
+            : (mx >= h && mx > 0) ? 'mixed'
+            : 'human';
     }
 
     return flatItems;
 }
 
 /**
- * Native Overlay Entry Point. Modifies original PDF dynamically.
+ * Fetch a single-page branded cover from the server report engine so the
+ * overlaid original gets a proper Jotril scorecard up front. Returns the PDF
+ * bytes, or null if it can't be produced (cover is optional).
  */
-export async function overlayPDFReport({ file, chunks }) {
+async function fetchCoverPdf(meta, chunks) {
+    try {
+        const res = await fetch('/api/report?cover=1', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                filename: meta?.filename,
+                breakdown: meta?.breakdown,
+                overallLabel: meta?.overallLabel,
+                sentenceCount: meta?.sentenceCount,
+                wordCount: meta?.wordCount,
+                // labels only — the cover needs segment counts, not full text
+                chunks: Array.isArray(chunks) ? chunks.map(c => ({ label: c.label })) : [],
+            }),
+        });
+        if (!res.ok) return null;
+        return new Uint8Array(await res.arrayBuffer());
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Native Overlay Entry Point. Highlights the ORIGINAL PDF in-place (perfect
+ * fidelity) and prepends a branded Jotril cover page.
+ */
+export async function overlayPDFReport({ file, chunks, meta = {} }) {
     try {
         const arrayBuffer = await file.arrayBuffer();
 
@@ -120,6 +165,19 @@ export async function overlayPDFReport({ file, chunks }) {
                 color: color,
                 opacity: 0.45 // Blend seamlessly over text without absolute masking
             });
+        }
+
+        // 4. Prepend the branded Jotril cover/scorecard (optional — skip on failure).
+        try {
+            const coverBytes = await fetchCoverPdf(meta, chunks);
+            if (coverBytes) {
+                const coverDoc = await PDFDocument.load(coverBytes);
+                const coverPages = await pdfDoc.copyPages(coverDoc, coverDoc.getPageIndices());
+                // insert in reverse so the original cover-page order is preserved at the front
+                coverPages.reverse().forEach((p) => pdfDoc.insertPage(0, p));
+            }
+        } catch (coverErr) {
+            console.warn('[PDF Overlay] Cover page skipped:', coverErr?.message || coverErr);
         }
 
         const modifiedPdfBytes = await pdfDoc.save();

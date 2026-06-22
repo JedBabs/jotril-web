@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useProcess } from "@/components/ProcessContext";
 import { showToast } from "@/components/Toast";
 
@@ -9,6 +9,25 @@ import { showToast } from "@/components/Toast";
  */
 export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
     const { isActive, openProcess, updateProcess, closeProcess } = useProcess();
+
+    // Cancellation plumbing for the in-flight analysis: an AbortController for the
+    // /api/analyze + /api/attribute fetches, the queue jobId so we can stop the
+    // window querying, and a flag so a late queue callback can't paint stale results.
+    const abortRef = useRef(null);
+    const jobIdRef = useRef(null);
+    const cancelledRef = useRef(false);
+
+    const cancelAnalysis = useCallback(() => {
+        cancelledRef.current = true;
+        try { abortRef.current?.abort(); } catch { /* already settled */ }
+        if (jobIdRef.current) {
+            import('@/lib/queue-manager')
+                .then(({ QueueManager }) => QueueManager.cancelJob(jobIdRef.current))
+                .catch(() => { /* module load race — nothing to cancel */ });
+            jobIdRef.current = null;
+        }
+        showToast("Analysis cancelled.", "info");
+    }, []);
 
     const [results, setResults] = useState(null);
     const [breakdown, setBreakdown] = useState(null);
@@ -78,6 +97,7 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
                     overallLabel: ovl,
                     breakdown,
                     chunks: computedResults.map(r => ({ text: r.text, label: r.label, score: r.score, para: r.para })),
+                    sourceHtml: html || null, // reproduced document HTML (DOCX) → high-fidelity past-scan PDFs
                 })
             }).catch(() => { /* offline / guest — ignore */ });
         } catch { /* ignore persistence errors */ }
@@ -93,7 +113,13 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
 
         if (text?.trim()) setLastText(text);
 
-        openProcess("analyze", "Parsing Document", "Extracting textual semantics locally...");
+        // Arm a fresh cancellation context for this run.
+        cancelledRef.current = false;
+        jobIdRef.current = null;
+        abortRef.current = new AbortController();
+        const { signal } = abortRef.current;
+
+        openProcess("analyze", "Parsing Document", "Extracting textual semantics locally...", cancelAnalysis);
 
         try {
             const formData = new FormData();
@@ -102,7 +128,7 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
             if (deviceHash) formData.append("hardwareFootprint", JSON.stringify(deviceHash));
 
             // 1. Offload Heavy Chunking directly to Edge Route Server
-            const res = await fetch("/api/analyze", { method: "POST", body: formData });
+            const res = await fetch("/api/analyze", { method: "POST", body: formData, signal });
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
                 showToast(data.error || "Analysis engine failure.", "error");
@@ -135,9 +161,15 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
                 updateProcess(15, `Scanning with expected delay: ${Math.round(etaMs / 1000)}s...`);
             }
 
+            // If the user cancelled while /api/analyze was in flight, stop before queueing.
+            if (cancelledRef.current) return;
+
             // Bind Global Queue Lifecycle Execution Event. Results are parallel to
             // uniqueTexts (== scenarios), so scores map straight back by index.
-            QueueManager.enqueueJob(file || { name: 'Pasted Text' }, uniqueTexts.map(t => ({ text: t })), userTier, async (windowResults) => {
+            jobIdRef.current = QueueManager.enqueueJob(file || { name: 'Pasted Text' }, uniqueTexts.map(t => ({ text: t })), userTier, async (windowResults) => {
+                // The job completed normally — clear the handle so a later cancel is a no-op.
+                jobIdRef.current = null;
+                if (cancelledRef.current) return; // cancelled mid-scan — discard results
                 try {
                     if (!isBackgroundHandled) updateProcess(85, "Attributing sentence scores...");
 
@@ -148,8 +180,11 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
                     const attrRes = await fetch("/api/attribute", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ sentences, scenarios, scores, estimate, monthKey, callsPerQuery, executedQueries })
+                        body: JSON.stringify({ sentences, scenarios, scores, estimate, monthKey, callsPerQuery, executedQueries }),
+                        signal
                     });
+
+                    if (cancelledRef.current) return; // cancelled during attribution
 
                     if (!attrRes.ok) {
                         const err = await attrRes.json().catch(() => ({}));
@@ -163,6 +198,7 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
 
                     processFinalResults(chunks, html, file);
                 } catch (e) {
+                    if (cancelledRef.current || e?.name === "AbortError") return; // user cancelled
                     console.error("Attribution stage failed:", e);
                     showToast("Scoring engine failed to attribute results.", "error");
                     closeProcess();
@@ -170,11 +206,12 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
             });
 
         } catch (error) {
+            if (cancelledRef.current || error?.name === "AbortError") return; // user cancelled
             console.error(error);
             showToast("Networking Failure fetching pipeline chunks.", "error");
             closeProcess();
         }
-    }, [openProcess, updateProcess, closeProcess, deviceHash, processFinalResults]);
+    }, [openProcess, updateProcess, closeProcess, deviceHash, processFinalResults, cancelAnalysis]);
 
     return {
         results, breakdown, overallLabel, handleAnalyze,

@@ -27,7 +27,7 @@ function SegmentBar({ used, max, color }) {
     );
 }
 
-export default function QuotaBar({ deviceHash, refreshKey = 0, session }) {
+export default function QuotaBar({ refreshKey = 0, session }) {
     const [quota, setQuota] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -36,19 +36,27 @@ export default function QuotaBar({ deviceHash, refreshKey = 0, session }) {
     useEffect(() => {
         if (!isLoggedIn) { setLoading(false); return; }
 
+        // Quota for a logged-in user is keyed by userId server-side, so the device
+        // fingerprint is irrelevant here. Omitting it (a) avoids a second fetch when
+        // the async fingerprint resolves and changes deviceHash, and (b) skips the
+        // pointless JSON serialize here + parse/hash on the server.
+        let cancelled = false;
         async function fetchQuota() {
             try {
-                const params = deviceHash ? `?fp=${encodeURIComponent(JSON.stringify(deviceHash))}` : "";
-                const res = await fetch(`/api/quota${params}`);
-                if (res.ok) setQuota(await res.json());
+                const res = await fetch(`/api/quota`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (!cancelled) setQuota(data);
+                }
             } catch (e) {
                 console.error("[QuotaBar] Failed to fetch quota:", e);
             } finally {
-                setLoading(false);
+                if (!cancelled) setLoading(false);
             }
         }
         fetchQuota();
-    }, [deviceHash, refreshKey, isLoggedIn]);
+        return () => { cancelled = true; };
+    }, [refreshKey, isLoggedIn]);
 
     if (!isLoggedIn || loading || !quota) return null;
 

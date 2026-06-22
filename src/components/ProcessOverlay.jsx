@@ -266,7 +266,7 @@ function VariantIcon({ variant }) {
 //  MAIN OVERLAY COMPONENT
 // ═══════════════════════════════════════════════════════════════
 
-export default function ProcessOverlay({ isActive, variant, progress, title, stepText }) {
+export default function ProcessOverlay({ isActive, variant, progress, title, stepText, cancellable, onCancel }) {
     const hueMap = { analyze: 265, upload: 220, download: 160 };
     const hue = hueMap[variant] || 265;
 
@@ -433,6 +433,29 @@ export default function ProcessOverlay({ isActive, variant, progress, title, ste
                                     Jotril requires active memory. Do not close this tab.
                                 </p>
                             </div>
+
+                            {/* Cancel control */}
+                            {cancellable && onCancel && (
+                                <div className="mt-7 flex justify-center">
+                                    <motion.button
+                                        type="button"
+                                        onClick={onCancel}
+                                        whileHover={{ scale: 1.04 }}
+                                        whileTap={{ scale: 0.96 }}
+                                        className="flex items-center gap-2 px-6 py-2.5 rounded-full text-xs font-bold uppercase tracking-widest text-white/90 transition-colors"
+                                        style={{
+                                            background: "hsla(0, 0%, 100%, 0.06)",
+                                            border: "1px solid hsla(0, 0%, 100%, 0.18)",
+                                            backdropFilter: "blur(8px)",
+                                        }}
+                                    >
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                        Cancel
+                                    </motion.button>
+                                </div>
+                            )}
 
                         </motion.div>
                     </div>
