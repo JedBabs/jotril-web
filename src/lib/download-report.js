@@ -14,6 +14,7 @@
  * Errors are surfaced as toasts; returns true on success, false otherwise.
  */
 import { showToast } from "@/components/Toast";
+import { resilientFetch } from "@/lib/resilient-fetch";
 
 function saveBlob(blob, name) {
     const url = URL.createObjectURL(blob);
@@ -64,53 +65,48 @@ export async function downloadReport(opts = {}) {
             // fall through to the server renderer
         }
 
-        // DOCX (fresh scan, original file in hand) + fidelity engine enabled →
-        // convert to PDF via Gotenberg/LibreOffice, then overlay highlights
-        // in-place like an uploaded PDF (native charts/tables/formatting kept).
-        // Server-only Gotenberg config; the public flag just gates the attempt.
-        // Any failure falls through to the standard /api/report renderer.
-        const isDocx = !!file && (/\.docx?$/i.test(file.name || "") ||
-            file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-            file.type === "application/msword");
-        if (
-            isDocx && Array.isArray(chunks) && chunks.length &&
-            process.env.NEXT_PUBLIC_REPORT_FIDELITY_ENGINE === "gotenberg"
-        ) {
+        // Persisted scan (fresh-with-id or history) → IDM-proof download.
+        // Trigger a real browser download via <a download> navigation to a GET
+        // endpoint instead of fetch+blob. Download-manager extensions (IDM/FDM)
+        // and the browser handle the bytes directly, so JS never reads the
+        // response and can't be intercepted into a 0-byte file. The endpoint
+        // serves the GCS-cached high-fidelity report (Gotenberg + highlights +
+        // cover) or renders on the fly. A HEAD preflight surfaces auth/missing
+        // errors without downloading a junk file.
+        if (scanId) {
+            const url = `/api/report/download?scanId=${encodeURIComponent(scanId)}`;
             try {
-                const fd = new FormData();
-                fd.append("file", file);
-                const conv = await fetch("/api/report/convert", { method: "POST", body: fd, signal });
-                if (conv.ok) {
-                    const pdfBlob = await conv.blob();
-                    const pdfName = (file.name || "document").replace(/\.[^/.]+$/, "") + ".pdf";
-                    const pdfFile = new File([pdfBlob], pdfName, { type: "application/pdf" });
-                    const { overlayPDFReport } = await import("@/lib/pdf-overlay");
-                    const ok = await overlayPDFReport({
-                        file: pdfFile,
-                        chunks,
-                        meta: { filename, breakdown, overallLabel, sentenceCount, wordCount },
-                    });
-                    if (ok) return true;
+                const head = await fetch(url, { method: "HEAD", credentials: "same-origin", signal });
+                if (!head.ok) {
+                    let msg = "Failed to generate report.";
+                    if (head.status === 401) msg = "Please sign in to download this report.";
+                    else if (head.status === 404) msg = "This scan could not be found.";
+                    throw new Error(msg);
                 }
-                // convert disabled (501) / failed, or overlay failed → standard path
-                showToast("High-fidelity render unavailable — generating a standard report.", "info");
             } catch (e) {
-                if (e?.name === "AbortError") throw e; // user cancelled — don't fall through
-                console.warn("[downloadReport] fidelity path failed, falling back:", e);
+                if (e?.name === "AbortError") return false;
+                showToast(e?.message || "Failed to generate report.", "error");
+                return false;
             }
-            // fall through to the server-rendered report
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `Jotril_Report_${baseName(filename)}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            return true;
         }
 
-        // DOCX / text / past scan → server-rendered HTML report.
-        const res = await fetch("/api/report", {
+        // Inline (text scan, or fresh scan before it's persisted) → POST render.
+        // resilientFetch retries transient 5xx/network with backoff; the report
+        // job is deterministic so retrying is safe.
+        const res = await resilientFetch("/api/report", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(
-                scanId
-                    ? { scanId }
-                    : { filename, breakdown, overallLabel, chunks, sentenceCount, wordCount, sourceHtml }
-            ),
+            body: JSON.stringify({ filename, breakdown, overallLabel, chunks, sentenceCount, wordCount, sourceHtml }),
             signal,
+            retry: true,
+            timeoutMs: 60000, // headless Chrome render can be slow on big docs
         });
 
         if (!res.ok) {

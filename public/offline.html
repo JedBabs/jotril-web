@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Jotril AI — You're offline</title>
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(circle at 30% 20%, #eef2ff 0%, #ffffff 60%);
+    color: #0f172a;
+    display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 2rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: radial-gradient(circle at 30% 20%, #0f172a 0%, #020617 60%); color: #e2e8f0; }
+  }
+  .card { max-width: 28rem; }
+  .dot { display:inline-block; width:.5rem; height:.5rem; border-radius:9999px; background:#f59e0b; vertical-align:middle; margin-right:.4rem; animation: p 1.4s infinite; }
+  @keyframes p { 0%,100% { opacity:.4 } 50% { opacity:1 } }
+  h1 { font-size: 1.5rem; margin: 1rem 0 .5rem; letter-spacing: -.01em; }
+  p  { font-size: .95rem; line-height: 1.5; opacity: .8; margin: 0 0 1.5rem; }
+  button {
+    font: inherit; cursor: pointer; padding: .6rem 1.1rem;
+    border-radius: .6rem; border: 0;
+    background: #2563eb; color: white; font-weight: 600;
+  }
+  button:hover { background: #1d4ed8; }
+  .brand { font-weight: 700; letter-spacing: .02em; opacity: .8; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand">JOTRIL AI</div>
+    <h1><span class="dot" aria-hidden="true"></span>You&rsquo;re offline</h1>
+    <p>We can&rsquo;t reach the network right now. Your in-progress work is saved locally and will resume when the connection returns.</p>
+    <button onclick="location.reload()">Try again</button>
+  </main>
+  <script>
+    // Auto-recover the moment the browser sees connectivity again.
+    window.addEventListener("online", () => location.reload());
+  </script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { getJSON } from "@/lib/resilient-fetch";
 
 /**
  * SegmentBar — 10-block progress meter, far more visually striking than a plain bar.
@@ -40,22 +41,20 @@ export default function QuotaBar({ refreshKey = 0, session }) {
         // fingerprint is irrelevant here. Omitting it (a) avoids a second fetch when
         // the async fingerprint resolves and changes deviceHash, and (b) skips the
         // pointless JSON serialize here + parse/hash on the server.
-        let cancelled = false;
-        async function fetchQuota() {
+        const ctrl = new AbortController();
+        (async () => {
             try {
-                const res = await fetch(`/api/quota`);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (!cancelled) setQuota(data);
-                }
+                // getJSON retries transient failures with jittered backoff — a 3G
+                // hiccup no longer leaves the quota panel permanently blank.
+                const data = await getJSON('/api/quota', { signal: ctrl.signal });
+                if (!ctrl.signal.aborted) setQuota(data);
             } catch (e) {
-                console.error("[QuotaBar] Failed to fetch quota:", e);
+                if (!ctrl.signal.aborted) console.error("[QuotaBar] Failed to fetch quota:", e);
             } finally {
-                if (!cancelled) setLoading(false);
+                if (!ctrl.signal.aborted) setLoading(false);
             }
-        }
-        fetchQuota();
-        return () => { cancelled = true; };
+        })();
+        return () => ctrl.abort();
     }, [refreshKey, isLoggedIn]);
 
     if (!isLoggedIn || loading || !quota) return null;

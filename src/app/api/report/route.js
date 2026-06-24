@@ -8,12 +8,37 @@ import { authOptions } from '../auth/[...nextauth]/route';
 import getPrisma from '@/lib/prisma';
 import { renderReportPdf } from '@/lib/report/render';
 import { generateReportId } from '@/lib/report/design-system';
+import { storageConfigured, reportKey, downloadReport as downloadCachedReport } from '@/lib/report-storage';
 
 const MAX_HTML_BYTES = 8 * 1024 * 1024; // cap reproduced-document HTML
 const MAX_CHUNKS = 50000;
 
 function safeFileBase(name) {
     return (String(name || 'Scan').replace(/\.[^/.]+$/, '').replace(/[^a-z0-9_-]+/gi, '_').slice(0, 60)) || 'Scan';
+}
+
+// Stream a PDF buffer as an attachment. Chunked so the body flows immediately
+// (long renders looked idle to download accelerators / intermediaries).
+function pdfResponse(buf, filename) {
+    const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+    const CHUNK = 64 * 1024;
+    const stream = new ReadableStream({
+        start(controller) {
+            for (let i = 0; i < u8.length; i += CHUNK) {
+                controller.enqueue(u8.subarray(i, Math.min(i + CHUNK, u8.length)));
+            }
+            controller.close();
+        },
+    });
+    return new Response(stream, {
+        status: 200,
+        headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Length': String(u8.length),
+            'Content-Disposition': `attachment; filename="Jotril_Report_${safeFileBase(filename)}.pdf"`,
+            'Cache-Control': 'no-store',
+        },
+    });
 }
 
 /**
@@ -57,6 +82,18 @@ export async function POST(req) {
             if (!scan) return NextResponse.json({ error: 'Scan result not found' }, { status: 404 });
             if (scan.userId !== session.user.id) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
+            // High-fidelity cache hit → stream the prewarmed Gotenberg + highlight
+            // + cover PDF (populated by /api/report/prewarm). Works for both fresh
+            // and history downloads; no original file needed.
+            if (!coverOnly && storageConfigured()) {
+                try {
+                    const cached = await downloadCachedReport(reportKey(session.user.id, body.scanId));
+                    if (cached) return pdfResponse(cached, scan.filename);
+                } catch (e) {
+                    console.warn('[Report] cache lookup failed; rendering fresh:', e?.message);
+                }
+            }
+
             data = {
                 filename: scan.filename, breakdown: scan.breakdown, overallLabel: scan.overallLabel,
                 chunks: Array.isArray(scan.chunks) ? scan.chunks : [],
@@ -90,19 +127,7 @@ export async function POST(req) {
         data.reportId = generateReportId();
 
         const pdf = await renderReportPdf(data);
-
-        // Return a standard Uint8Array and let the platform set Content-Length.
-        // Hand-setting Content-Length collided with the dev server's chunked
-        // transfer encoding → browsers received 0 bytes (Node's lenient client
-        // didn't). See _report_debug history.
-        return new NextResponse(new Uint8Array(pdf), {
-            status: 200,
-            headers: {
-                'Content-Type': 'application/pdf',
-                'Content-Disposition': `attachment; filename="Jotril_Report_${safeFileBase(data.filename)}.pdf"`,
-                'Cache-Control': 'no-store',
-            },
-        });
+        return pdfResponse(pdf, data.filename);
     } catch (error) {
         console.error('[Report] PDF render failed:', error);
         return NextResponse.json({ error: 'Failed to generate report PDF' }, { status: 500 });

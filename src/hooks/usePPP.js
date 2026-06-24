@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { getJSON } from '@/lib/resilient-fetch';
 
 // Pricing Tiers based on Purchasing Power Parity (PPP)
 const PPP_TIERS = {
@@ -28,15 +29,19 @@ export function usePPP() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        let mounted = true;
+        const ctrl = new AbortController();
 
-        // Use geojs for IP-based country detection purely on the client side
-        fetch('https://get.geojs.io/v1/ip/country.json')
-            .then(res => res.json())
+        // External geo lookup — short timeout + retry, so a flaky link doesn't
+        // hang the price tier indefinitely. On exhaustion we silently fall
+        // through to DEFAULT pricing (safer than blocking the UI).
+        getJSON('https://get.geojs.io/v1/ip/country.json', {
+            signal: ctrl.signal,
+            timeoutMs: 6000,
+            retries: 2,
+        })
             .then(data => {
-                if (!mounted) return;
-
-                const cc = data.country;
+                if (ctrl.signal.aborted) return;
+                const cc = data?.country;
                 if (INDIA_COUNTRIES.includes(cc)) {
                     setPremiumPricing(PPP_TIERS.INDIA);
                 } else if (NIGERIA_COUNTRIES.includes(cc)) {
@@ -49,14 +54,16 @@ export function usePPP() {
                     setPremiumPricing(PPP_TIERS.DEFAULT);
                 }
             })
-            .catch((err) => {
-                console.warn("[PPP] Failed to fetch geolocation, falling back to default pricing");
+            .catch(() => {
+                if (!ctrl.signal.aborted) {
+                    console.warn("[PPP] Failed to fetch geolocation, falling back to default pricing");
+                }
             })
             .finally(() => {
-                if (mounted) setLoading(false);
+                if (!ctrl.signal.aborted) setLoading(false);
             });
 
-        return () => { mounted = false; };
+        return () => ctrl.abort();
     }, []);
 
     return { premiumPricing, loading };

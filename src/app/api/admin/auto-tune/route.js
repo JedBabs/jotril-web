@@ -24,7 +24,10 @@ export async function POST(req) {
         if (source === 'split-public') {
             let allPublicSamples = [];
             for (let i = 1; i <= 4; i++) {
-                const chunkPath = path.join(process.cwd(), 'public', `tuning_baseline_part_${i}.json`);
+                // Internal-only training data — kept OUT of /public so it isn't
+                // publicly fetchable or shipped to the browser bundle.
+                // Tracing is wired up in next.config.mjs (outputFileTracingIncludes).
+                const chunkPath = path.join(process.cwd(), 'internal-data', `tuning_baseline_part_${i}.json`);
                 if (!fs.existsSync(chunkPath)) {
                     return NextResponse.json({ error: `Missing dataset part ${i}` }, { status: 404 });
                 }

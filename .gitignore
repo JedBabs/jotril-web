@@ -60,5 +60,6 @@ test_dataset.json
 gh-cli/
 gh.zip
 
-# tuning results
+# tuning results — historical path (kept for old branches); current path is internal-data/
 public/tuning_baseline.json
+internal-data/tuning_baseline.json

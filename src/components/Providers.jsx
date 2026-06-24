@@ -4,6 +4,8 @@ import { ThemeProvider } from "next-themes";
 import dynamic from "next/dynamic";
 import { ProcessProvider } from "./ProcessContext";
 import ScanGuard from "./ScanGuard";
+import OfflineBanner from "./OfflineBanner";
+import ServiceWorkerRegister from "./ServiceWorkerRegister";
 
 // Dev-only diagnostics overlay. It's heavy for what it is — it statically pulls in
 // the queue manager + jotrilService and installs global error/fetch interceptors —
@@ -24,6 +26,8 @@ export default function Providers({ children }) {
             <ProcessProvider>
                 <ThemeProvider attribute="data-theme" defaultTheme="light" themes={['light', 'dark', 'colorful']}>
                     {children}
+                    <OfflineBanner />
+                    <ServiceWorkerRegister />
                     <ScanGuard />
                     <DevTools />
                 </ThemeProvider>

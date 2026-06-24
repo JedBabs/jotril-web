@@ -21,10 +21,12 @@ export async function POST(req) {
             console.warn("Secure Proxy Warning: HF_TOKEN is missing in Vercel/Local environment variables.");
         }
 
-        console.log(`[Proxy] Forwarding secure request to: ${targetUrl}`);
-        // Log what we are sending!
-        console.log("SENDING HEADERS:", options.headers);
-        console.log("SENDING BODY:", options.body);
+        // Verbose forward logs are dev-only — they were per-invocation noise
+        // (60-90 calls per scan × headers+body) and leaked the user's text
+        // through the platform log pipeline.
+        if (process.env.NODE_ENV !== 'production') {
+            console.log(`[Proxy] Forwarding secure request to: ${targetUrl}`);
+        }
         const hfResponse = await fetch(targetUrl, options);
 
         // Fetch exact output payload

@@ -3,14 +3,46 @@ import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { showToast } from "./Toast";
 
+const DRAFT_KEY = "jotril.scanner.draft";
+
 export default function FileUploader({ onAnalyze, disabled, deviceHash, initialText = "" }) {
     const [isDragging, setIsDragging] = useState(false);
-    const [text, setText] = useState(initialText);
+    // Lazy initializer: restore the last unsubmitted draft so a connection
+    // drop or accidental refresh doesn't lose what the user was pasting.
+    // `initialText` (e.g. "retry last scan") always wins if provided.
+    const [text, setText] = useState(() => {
+        if (initialText) return initialText;
+        if (typeof window === "undefined") return "";
+        try {
+            return window.localStorage.getItem(DRAFT_KEY) || "";
+        } catch {
+            return "";
+        }
+    });
     const [isParsing, setIsParsing] = useState(false);
     const [costPreview, setCostPreview] = useState(null);
     const debounceRef = useRef(null);
+    const draftRef = useRef(null);
 
     const MAX_TEXT_LENGTH = 50000;
+
+    // Persist the textarea draft (debounced) so a flaky link / refresh
+    // doesn't wipe what the user has been typing or pasting.
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        if (draftRef.current) clearTimeout(draftRef.current);
+        draftRef.current = setTimeout(() => {
+            try {
+                if (text) window.localStorage.setItem(DRAFT_KEY, text);
+                else window.localStorage.removeItem(DRAFT_KEY);
+            } catch {
+                /* storage full / disabled — draft persistence is best-effort */
+            }
+        }, 400);
+        return () => {
+            if (draftRef.current) clearTimeout(draftRef.current);
+        };
+    }, [text]);
 
     // Debounced cost preview
     useEffect(() => {

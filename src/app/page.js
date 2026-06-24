@@ -2,19 +2,39 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { motion, AnimatePresence, useMotionValue, useSpring } from "framer-motion";
+import dynamic from "next/dynamic";
 import Navbar from "@/components/Navbar";
 import FileUploader from "@/components/FileUploader";
-import HeatmapViewer from "@/components/HeatmapViewer";
-import ScoreGauge from "@/components/ScoreGauge";
-import ColdStartOverlay from "@/components/ColdStartOverlay";
 import ToastContainer, { showToast } from "@/components/Toast";
 import { usePPP } from "@/hooks/usePPP";
 import { useAnalyze } from "@/hooks/useAnalyze";
 import QuotaBar from "@/components/QuotaBar";
-import SignUpNudge from "@/components/SignUpNudge";
-import InteractiveBackground from "@/components/InteractiveBackground";
 import { generateHardwareVector } from "@/lib/fingerprint";
 import { useProcess } from "@/components/ProcessContext";
+
+// Below-the-fold / conditional components — split out of the initial bundle.
+// On slow networks the hero + scanner CTA paint sooner; these only download
+// when they're actually needed (after a scan completes / on cold start /
+// when the canvas background mounts client-side).
+const HeatmapViewer = dynamic(() => import("@/components/HeatmapViewer"), {
+    loading: () => null,
+});
+const ScoreGauge = dynamic(() => import("@/components/ScoreGauge"), {
+    loading: () => null,
+});
+const ColdStartOverlay = dynamic(() => import("@/components/ColdStartOverlay"), {
+    ssr: false,
+    loading: () => null,
+});
+const SignUpNudge = dynamic(() => import("@/components/SignUpNudge"), {
+    loading: () => null,
+});
+// Canvas-only visual; never SSR'd. Skipping SSR also avoids hydration cost
+// on slow CPUs.
+const InteractiveBackground = dynamic(() => import("@/components/InteractiveBackground"), {
+    ssr: false,
+    loading: () => null,
+});
 
 // ─── FAQ data ───────────────────────────────────────────────
 const faqs = [
@@ -218,6 +238,7 @@ export default function Home() {
         quotaRefreshKey,
         isActive,
         lastText,
+        lastScanId,
         handleAnalyze,
         handleRetry,
         resetResults,
@@ -514,6 +535,10 @@ export default function Home() {
                                             try {
                                                 const { downloadReport } = await import("@/lib/download-report");
                                                 await downloadReport({
+                                                    // Prefer the cached high-fidelity report by id once the scan
+                                                    // is persisted; inline fields are the fallback if the user
+                                                    // downloads before the save/prewarm completes.
+                                                    scanId: lastScanId || undefined,
                                                     file: scannedFile,
                                                     filename: scannedFile ? scannedFile.name : 'Text_Scan',
                                                     breakdown,

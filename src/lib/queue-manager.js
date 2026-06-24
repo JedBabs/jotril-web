@@ -29,9 +29,43 @@ class JotrilQueueManager {
             // Expected latency per chunk (estimated 1200ms API round trip)
             this.estimatedLatencyMs = 1200;
 
+            // Pause state — used by the offline detector to stop hammering the
+            // proxy/HF Spaces when the network is down. Workers `await
+            // _waitWhilePaused()` between chunks instead of spinning; pause is
+            // a no-op when no jobs are queued.
+            this.paused = false;
+            this._pauseWaiters = new Set();
+
             JotrilQueueManager.instance = this;
         }
         return JotrilQueueManager.instance;
+    }
+
+    /**
+     * Pause/resume the worker loop. Safe to call from anywhere; idempotent.
+     * Active in-flight queries are NOT cancelled — only NEW chunk pickup is
+     * suspended (the in-flight call will either succeed or fail through its
+     * own timeout/retry, both bounded). Callers: OfflineBanner on
+     * window.offline, resume on window.online.
+     */
+    pause() {
+        if (this.paused) return;
+        this.paused = true;
+        this._notify();
+    }
+
+    resume() {
+        if (!this.paused) return;
+        this.paused = false;
+        // Wake all sleeping workers in one shot.
+        for (const resolve of this._pauseWaiters) resolve();
+        this._pauseWaiters.clear();
+        this._notify();
+    }
+
+    _waitWhilePaused() {
+        if (!this.paused) return Promise.resolve();
+        return new Promise((resolve) => this._pauseWaiters.add(resolve));
     }
 
     subscribe(callback) {
@@ -93,8 +127,34 @@ class JotrilQueueManager {
      * @param {function} onScanComplete - Callback fired with full results array
      * @returns {string} jobId
      */
+    /**
+     * Network-aware concurrency cap. Reads navigator.connection.effectiveType
+     * (Network Information API, Chromium-only — Safari/Firefox return undefined
+     * → we keep the full cap). On a slow link, blasting 60+ concurrent polls
+     * just floods the connection budget and starves them all; throttling buys
+     * higher per-chunk success.
+     */
+    _adaptConcurrencyToNetwork() {
+        const base = this.PER_SPACE_CONCURRENCY * SPACES.length;
+        if (typeof navigator === 'undefined') { this.MAX_CONCURRENCY = base; return; }
+        const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        const eff = conn?.effectiveType;
+        if (eff === 'slow-2g' || eff === '2g') {
+            // 1-2 in-flight requests is realistic on 2G; anything more competes
+            // for the same trickle of bandwidth.
+            this.MAX_CONCURRENCY = Math.max(2, Math.min(base, SPACES.length));
+        } else if (eff === '3g') {
+            // ~10/Space lets a 30-chunk scan progress at a useful clip without
+            // hammering a TCP pipe that already drops under load.
+            this.MAX_CONCURRENCY = Math.max(4, Math.min(base, Math.floor(this.PER_SPACE_CONCURRENCY / 3) * SPACES.length));
+        } else {
+            this.MAX_CONCURRENCY = base; // 4g / wifi / unknown → full pool
+        }
+    }
+
     enqueueJob(fileOrMeta, chunkDataArray, tier, onScanComplete) {
         const jobId = crypto.randomUUID();
+        this._adaptConcurrencyToNetwork();
 
         this.activeJobs.set(jobId, {
             id: jobId,
@@ -138,6 +198,9 @@ class JotrilQueueManager {
 
     async _runWorkerLoop() {
         while (this.queue.length > 0) {
+            // Honor the paused flag (offline / explicit pause). Workers sleep
+            // here without busy-looping and wake when `resume()` flushes them.
+            if (this.paused) await this._waitWhilePaused();
             const chunkJob = this.queue.shift();
 
             const parentJob = this.activeJobs.get(chunkJob.jobId);

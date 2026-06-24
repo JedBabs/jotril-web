@@ -23,20 +23,37 @@ import {
     DownloadCloud,
     Search
 } from 'lucide-react';
+import dynamic from "next/dynamic";
 import GlitchLogo from "@/components/GlitchLogo";
-import SignUpNudge from "@/components/SignUpNudge";
-import InteractiveBackground from "@/components/InteractiveBackground";
 import QuotaBar from "@/components/QuotaBar";
 import FileUploader from "@/components/FileUploader";
-import HeatmapViewer from "@/components/HeatmapViewer";
-import ScoreGauge from "@/components/ScoreGauge";
-import ColdStartOverlay from "@/components/ColdStartOverlay";
 import ToastContainer, { showToast } from "@/components/Toast";
 import QueueSidebar from "@/components/QueueSidebar";
+
+// Below-the-fold / conditional components — code-split out of the dashboard's
+// first-load bundle. These only download when they're actually needed.
+const HeatmapViewer = dynamic(() => import("@/components/HeatmapViewer"), {
+    loading: () => null,
+});
+const ScoreGauge = dynamic(() => import("@/components/ScoreGauge"), {
+    loading: () => null,
+});
+const ColdStartOverlay = dynamic(() => import("@/components/ColdStartOverlay"), {
+    ssr: false,
+    loading: () => null,
+});
+const SignUpNudge = dynamic(() => import("@/components/SignUpNudge"), {
+    loading: () => null,
+});
+const InteractiveBackground = dynamic(() => import("@/components/InteractiveBackground"), {
+    ssr: false,
+    loading: () => null,
+});
 import { generateHardwareVector } from "@/lib/fingerprint";
 import { useAnalyze } from "@/hooks/useAnalyze";
 import { useProcess } from "@/components/ProcessContext";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
+import { getJSON } from "@/lib/resilient-fetch";
 
 const tierGradients = {
     FREE: "from-accent-blue to-accent-cyan",
@@ -55,11 +72,11 @@ export default function EnhancedAccountPortal() {
     const [deviceHash, setDeviceHash] = useState(null);
 
     const refreshDashboard = useCallback(() => {
-        fetch('/api/dashboard')
-            .then((response) => response.json())
-            .then((data) => {
-                if (!data.error) setStats(data);
-            })
+        // getJSON retries 5xx/network with backoff; a temporary blip no longer
+        // wipes the dashboard. Errors are swallowed silently — the existing
+        // skeleton/zero state is the right fallback.
+        getJSON('/api/dashboard')
+            .then((data) => { if (data && !data.error) setStats(data); })
             .catch((err) => console.error("Dashboard data fetch failed:", err));
     }, []);
 
@@ -73,6 +90,7 @@ export default function EnhancedAccountPortal() {
         quotaRefreshKey,
         isActive,
         lastText,
+        lastScanId,
         handleAnalyze,
         handleRetry,
         resetResults,
@@ -101,13 +119,14 @@ export default function EnhancedAccountPortal() {
         if (status === 'authenticated') {
             const fetchData = async () => {
                 try {
-                    const dashRes = await fetch('/api/dashboard');
-                    const dashData = await dashRes.json();
-
-                    if (!dashData.error) setStats(dashData);
-                    setIsDataLoaded(true);
+                    const dashData = await getJSON('/api/dashboard');
+                    if (dashData && !dashData.error) setStats(dashData);
                 } catch (err) {
+                    // Even on full exhaustion we still want the page to render —
+                    // the skeleton + zero state is the right fallback on a dead link.
                     console.error("Dashboard data fetch failed:", err);
+                } finally {
+                    setIsDataLoaded(true);
                 }
             };
             fetchData();
@@ -277,6 +296,7 @@ export default function EnhancedAccountPortal() {
                                                         try {
                                                             const { downloadReport } = await import("@/lib/download-report");
                                                             await downloadReport({
+                                                                scanId: lastScanId || undefined,
                                                                 file: scannedFile,
                                                                 filename: scannedFile ? scannedFile.name : 'Text_Scan',
                                                                 breakdown,

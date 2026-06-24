@@ -6,7 +6,7 @@
 
 > This file is the single source of truth for all Claude sessions on this project.
 > Update it immediately whenever architecture, bugs, fixes, or intentions change.
-> Last updated: 2026-06-22 (user-cancellable processes — Cancel button on the ProcessOverlay + per-job cancel in QueueSidebar, wired through AbortControllers and a hardened `QueueManager.cancelJob`, see §15/§9; load-time fixes — parallelized the sequential DB queries in `/api/dashboard` and `getQuotaStatus`, killed the duplicate `/api/quota` fetch, and code-split + dev-gated `DevDebugOverlay` out of the global bundle, see §15). Prior: FIXED 0-byte PDF downloads — binary routes hand-set Content-Length, which zeroed browser downloads while node fetch hid it; now return Uint8Array, see §15/§16. Gotenberg/Cloud Run high-fidelity DOCX path scaffolded + deployed. ScanResult.sourceHtml column PUSHED to live DB + DOCX report fidelity verified end-to-end; PDF report engine rebuilt on headless Chrome — see §19. Plan: Hobby now → 50-tester private beta → Pro before public launch.
+> Last updated: 2026-06-24 (HF SPACE LOG CLEANUP: silenced Gradio's Starlette `HTTP_422_UNPROCESSABLE_ENTITY` deprecation warning via a scoped `warnings.filterwarnings` at the top of `app.py` in all three Spaces — committed + pushed (Space-3 was cloned in; it wasn't local). Earlier 2026-06-24: HIGH-FIDELITY DOCX REPORT CACHE + AUTO-PREWARM via Gotenberg + GCS, see §15/§19. New: lib/gotenberg.js, lib/report-storage.js, lib/report/server-overlay.js, /api/report/prewarm, /api/report/download. DOCX scans now prewarm in the background (DOCX→PDF→highlights+cover→GCS) so fresh AND history downloads are instant high-fidelity. Persisted-scan downloads use a real `<a download>` navigation to the new GET endpoint — survives IDM/FDM (which was eating fetch+blob into a fake 204 the day before — see §16). Verified Node-side: Gotenberg IAM, GCS round-trip, server overlay. Prior: user-cancellable processes; load-time fixes; PDF report engine rebuilt on headless Chrome — see §19. Plan: Hobby now → 50-tester private beta → Pro before public launch.
 
 ---
 
@@ -58,10 +58,11 @@ EMAIL_SERVER_PASSWORD   SMTP password
 EMAIL_FROM              Sender email address
 CRON_SECRET             Vercel cron job authorization (used in keep-awake endpoint)
 DEV_PIN                 6-digit dev admin PIN — change in production
-GOTENBERG_URL           (optional) self-hosted Gotenberg base URL for high-fidelity DOCX→PDF (Cloud Run). SERVER-ONLY. Unset → standard mammoth report path.
-GCP_SA_KEY              (optional) base64-encoded GCP service-account JSON. Set → convert route mints a Cloud Run ID token (IAM auth) for a --no-allow-unauthenticated Gotenberg. SERVER-ONLY.
+GOTENBERG_URL           (optional) self-hosted Gotenberg base URL for high-fidelity DOCX→PDF (Cloud Run). SERVER-ONLY. Unset → prewarm 501s, downloads use standard render.
+GCP_SA_KEY              (optional) base64-encoded GCP service-account JSON. Used to mint Cloud Run ID tokens (Gotenberg IAM) AND GCS access tokens for the cache. SERVER-ONLY.
 GOTENBERG_AUTH          (optional) static Authorization header fallback (only used if GCP_SA_KEY unset; Gotenberg has NO built-in basic auth — only for a self-hosted auth proxy)
-NEXT_PUBLIC_REPORT_FIDELITY_ENGINE  (optional) set to "gotenberg" to let the client attempt the fidelity path; pair with GOTENBERG_URL
+GCS_BUCKET              (optional) GCS bucket caching rendered reports (e.g. jotril-glutenberg-reports-eu, all lowercase). Pair with GCP_SA_KEY. Without it, prewarm is skipped and every download renders fresh.
+NEXT_PUBLIC_REPORT_FIDELITY_ENGINE  (DEPRECATED 2026-06-23) the fidelity path is now server-side (prewarm + GCS cache) and no longer requires a client flag. Safe to leave unset.
 ```
 
 ---
@@ -97,6 +98,10 @@ src/
 │       ├── attribute/route.js        POST — full engine: attribution→smoothing→classify + budget reconcile
 │       ├── estimate/route.js        POST — cost preview (no model call)
 │       ├── parse/route.js           POST — legacy file parsing (5MB limit)
+│       ├── report/route.js          POST — render report (inline or {scanId}); scanId branch checks GCS cache first
+│       ├── report/convert/route.js  POST — proxy DOCX→PDF via Gotenberg (Cloud Run ID token via GCP_SA_KEY). Currently orphaned (kept for diagnostics)
+│       ├── report/prewarm/route.js  ★ POST — fired after scan completes: convert DOCX → overlay highlights+cover → upload to GCS
+│       ├── report/download/route.js ★ GET (IDM-proof, navigation download) + HEAD (preflight) — streams cached PDF or renders on the fly
 │       ├── gradio-proxy/route.js    POST — Edge Runtime proxy, injects HF_TOKEN server-side
 │       ├── quota/route.js           GET — current quota status
 │       ├── dashboard/route.js       GET — user stats, recent scans
@@ -145,12 +150,14 @@ src/
     ├── auth-security.js             Brute force protection + token management
     ├── prisma.js                    Prisma singleton (avoids hot-reload connection leaks)
     ├── email.js                     Nodemailer + branded HTML email templates
-    ├── file-parser.js               PDF/DOCX/TXT extraction (PDF uses pdf-parse v2 `PDFParse` class)
+    ├── file-parser.js               PDF/DOCX/TXT extraction (PDF uses pdf-parse v2 `PDFParse` class) + `htmlToProseText` (strips tables for scoring)
     ├── parse-analysis-stream.js     SSE stream parser for Gradio responses
-    ├── download-report.js           ★ Client entry for "Download PDF" — routes PDF→overlay, else→/api/report (see §19)
-    ├── report/                      ★ Headless-Chrome report engine: design-system, report-template, highlight-injector, render (see §19)
+    ├── download-report.js           ★ Client entry for "Download PDF" — PDF→overlay, scanId→GET /api/report/download (IDM-proof navigation), inline→POST /api/report (see §19)
+    ├── report/                      ★ Headless-Chrome report engine: design-system, report-template, highlight-injector, render, server-overlay (see §19)
+    ├── gotenberg.js                 ★ Server-only Gotenberg client (`convertDocxToPdf`); Cloud Run ID token from GCP_SA_KEY w/ GOTENBERG_AUTH fallback (see §19)
+    ├── report-storage.js            ★ Server-only GCS cache for rendered reports (REST API + GCP_SA_KEY access token; no extra dep). Key `${userId}/${scanId}.pdf` (see §19)
     ├── pdf-generator.js             DEPRECATED shim — old pdfmake/html-to-pdfmake generator, replaced by report/ + /api/report
-    ├── pdf-overlay.js               In-place highlight overlay on original PDFs (pdf-lib) + merged branded cover (see §19)
+    ├── pdf-overlay.js               In-place highlight overlay on original PDFs (pdf-lib) + merged branded cover. WORD-LEVEL resyncing mapper (see §19)
     ├── empty-module.js              Build stub — aliases pdfjs-dist's require("canvas") out of the client bundle
     ├── fingerprint.js               Client-side hardware fingerprinting (15+ signals, 0-100 score)
     └── exclusion-filter.js          Filters generic/boilerplate sentences from scoring
@@ -458,6 +465,25 @@ Design language: glassmorphism (`backdrop-filter: blur(24px)`), gradient buttons
 
 ## 15. Known Issues & History
 
+### Fixed 2026-06-24
+- **HF Space logs spammed with a Starlette deprecation warning (cosmetic).** Every queue-join (i.e. every model query the web app makes) logged `StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.` from inside Gradio (`gradio/routes.py:1528`). The deprecated constant is referenced by **Gradio itself**, not our code — a newer Starlette renamed it — so it can't be fixed at the call site on a Space. **Fix:** added a narrowly-scoped `warnings.filterwarnings("ignore", message=".*HTTP_422_UNPROCESSABLE_ENTITY.*")` at the top of `app.py` (right after `import os`, before the gradio import) in **all three** Spaces (`Jotril-Space-1/2/3`). The filter only matches that one message, so genuine future deprecations still surface. Considered + rejected: pinning Starlette down (risks conflicting with Gradio's range / stale-insecure version) and pinning/upgrading Gradio (none currently pinned; unknown fixed version). Remove the block once Gradio updates upstream. **Deployed:** committed + pushed to all three HF Space git remotes (Space-1 `94c7f4d`, Space-2 `c5f7dde`, Space-3 `5c9b01a`); Spaces rebuild on push. **Note:** `Jotril-Space-3` had to be cloned into the repo (it wasn't present locally; the other two already were). ⚠️ **Security debt (deferred by user):** Space-1/2 (and now Space-3, after this push) store the HF write token in plaintext in `.git/config`'s remote URL — should be rotated and moved to a git credential helper (token was also exposed in session output).
+- **🚩 Gotenberg prewarm silently failed — `pdfjs-dist/legacy/build/pdf.mjs` does not exist.** `server-overlay.js` `loadPdfjs()` tried `import('pdfjs-dist/legacy/build/pdf.mjs')` first (with a `.js` fallback in a try/catch). The installed `pdfjs-dist` v3.11.174 has no `.mjs` in `legacy/build/`. While the try/catch pattern works in plain Node, **Turbopack statically analyzes dynamic imports at compile time** and emitted `Module not found: Can't resolve 'pdfjs-dist/legacy/build/pdf.mjs'` — the compiled import stub fails at runtime regardless of the catch. Since the prewarm is fire-and-forget (`.catch(() => {})`), the failure was completely silent; the GCS bucket stayed empty; every download fell through to the minimalist HTML→PDF renderer. **Fix:** removed the `.mjs` attempt, import `.js` directly. Also added `console.warn` logging to the prewarm call in `useAnalyze.js` (was silently swallowed) and step-by-step `[Prewarm]` logging to the prewarm route handler. **Verified end-to-end:** a real DOCX scan now runs step 1/4→4/4 and caches `{userId}/{scanId}.pdf` in GCS (the `Cannot polyfill DOMMatrix/Path2D — Cannot find module 'canvas'` warnings from pdf.js are benign; `server-overlay` only calls `getTextContent()`, which needs no canvas). **Lesson:** never try/catch speculative module paths in Next.js — Turbopack resolves them at compile time, not runtime.
+- **⚡ Prewarm parallelized — Gotenberg conversion now overlaps the scan instead of trailing it.** Previously the DOCX→PDF conversion (the slow, cold-start-prone step, ~6s warm / 17–30s cold) didn't even *start* until the entire HF scan finished, saved, and fired prewarm — fully serialized after the slowest part of the flow. But the conversion depends only on the file bytes, not the scan results (only highlight+cover+upload need `chunks`/`scanId`). Split `POST /api/report/prewarm` into two phases keyed by a content hash:
+  - **Phase A** (fired at upload in `handleAnalyze`, **no scanId**): convert DOCX→PDF, cache at `conversions/{sha256(file)}.pdf` in the same bucket. Runs in parallel with the scan, absorbing the Cloud Run cold start while the HF queries run.
+  - **Phase B** (scan-complete prewarm in `processFinalResults`, file + scanId): `downloadReport(conversionKey)` — if Phase A finished (the common case, scan is slower), **skip Gotenberg entirely** and go straight to highlight+cover+upload; else convert inline as fallback (and cache it). The file hash links the phases without a scanId at upload time; idempotent, dedupes re-scans, content-addressed (safe — bucket is private, hash requires the file). Same one Gotenberg invocation, just overlapped → high-fidelity report ready ~17–30s sooner, usually before the heatmap finishes painting. New `conversionKey(hash)` in `report-storage.js`; `isDocxFile()` hoisted to module scope in `useAnalyze.js`. New log lines: `[Prewarm] convert-only…` (Phase A) and `[Prewarm] step 1/4: reusing parallel conversion (Gotenberg skipped)` (Phase B hit). ✅ **Lifecycle rule applied (2026-06-24):** the bucket `jotril-glutenberg-reports-eu` now has a GCS Object Lifecycle rule — `Delete` any object with `matchesPrefix: ["conversions/"]` and `age: 1` (day). The intermediate is only needed between upload and scan-complete; the final `{userId}/{scanId}.pdf` is the durable artifact and is NOT matched (a userId-prefixed path never starts with `conversions/`). **Note:** the app SA `vercel-gotenberg@jotril-app` only has `objectAdmin` (no `storage.buckets.update`), so this could NOT be set with the app credential — it was applied with the owner account (`babalolajedidiah@gmail.com`) via `gcloud storage buckets update --lifecycle-file`. Re-apply the same way if the bucket is ever recreated.
+
+### 2026-06-23
+- **🚩 0-byte browser downloads were caused by Internet Download Manager (IDM), NOT our code.** After a long hunt (file-logging proved the route rendered & streamed the full 3.4 MB every time), the DevTools console showed `status 204 Intercepted by the IDM Advanced Integration`. IDM hooks any `Content-Disposition: attachment` response, swallows the body, and hands JS a fake 204 → `BLOB SIZE: 0`. curl always worked (no IDM). **Fix is on the user's machine** (exclude localhost in IDM / disable its browser extension), not in code. The `Content-Length` collision theory from the day before was a red herring — though the cleaner streaming `Response` we landed on is kept. Lesson: download empty in-browser but fine via curl → suspect a download-accelerator/AV extension first; get the response status string early.
+- **High-fidelity report caching + auto-prewarm (GCS).** New architecture so DOCX reports are Gotenberg-quality on BOTH fresh and history downloads, cold start absorbed in the background:
+  - `src/lib/gotenberg.js` — shared Gotenberg client (`convertDocxToPdf`); mints a Cloud Run ID token from `GCP_SA_KEY` (IAM), `GOTENBERG_AUTH` static fallback.
+  - `src/lib/report-storage.js` — GCS cache via JSON REST + access token from `GCP_SA_KEY` (no new dep). Key `${userId}/${scanId}.pdf`, bucket `GCS_BUCKET`.
+  - `src/lib/report/server-overlay.js` — Node port of the client overlay: pdf.js layout + word-level resync mapper + pdf-lib rects + cover prepend. (pdf.js/pdf-lib/google-auth-library added to `serverExternalPackages`.)
+  - `POST /api/report/prewarm` (FormData: file+scanId) — convert → highlight+cover → upload to GCS. Idempotent. Fired fire-and-forget from `useAnalyze.processFinalResults` after the scan saves (awaits save for `scanId`).
+  - `/api/report` ({scanId}) checks GCS first → streams cached PDF, else standard render. `useAnalyze` exposes `lastScanId`; fresh-download buttons (page.js, dashboard) pass `scanId` to hit the cache. Client-side DOCX convert/overlay branch in `download-report.js` REMOVED (superseded); `/api/report/convert` now orphaned; PDF-upload overlay path unchanged.
+  - **Verified in Node:** `convertDocxToPdf` (IAM-locked Gotenberg → 200), `buildHighlightedReport` (native charts+tables+highlights, 1.2s). **NOT yet run end-to-end** — needs GCS bucket created + dev restart.
+  - **Requires:** create `gs://jotril-glutenberg-reports-eu` (lowercase only) + `objectAdmin` to `vercel-gotenberg@jotril-app` + `GCS_BUCKET` env. **Bucket + GCS round-trip verified** against the live bucket. Cosmetic known issue: chart-internal data-label text gets highlighted (real text in the LibreOffice PDF); fine for beta.
+- **IDM-proof downloads (`GET /api/report/download?scanId=…`).** Any persisted scan (fresh-with-id OR history) now downloads via a real browser navigation (`<a download href=…>`) instead of `fetch`+blob, with a `HEAD` preflight for error surfacing. Download managers (IDM/FDM) and the browser handle the bytes directly, so JS never reads the response — this *works WITH IDM running* (IDM does its normal download), fixing the 0-byte class of bug for all testers, not just by asking them to disable IDM. The endpoint serves the GCS-cached PDF or renders on the fly. `download-report.js`: `scanId` → navigation download; inline (text scan before save) and PDF-upload overlay paths unchanged. `lastScanId` is set for text scans too, so they're also covered once saved.
+
 ### Fixed 2026-06-22
 - **🚩 Unauthenticated abuse gate was a no-op — fingerprint quota now actually enforced.** The client computed + sent the hardware vector on every scan, but the live path threw it away: `/api/analyze` never read `hardwareFootprint`, never called `checkQuota`, and **`recordQuotaUsage` was only ever called by `/api/v1/detect`** (the API-key path). So the `QuotaUsage` table got **zero rows** from the web UI → every `checkQuota` aggregate read 0 → `allowed:true` forever. The only place quota was *checked*, `/api/estimate`, is an advisory client-triggered preview an abuser just skips. Net: unauthenticated (and FREE) users had **effectively unlimited scans**. Three-part fix:
   - **Enforcement wired into `/api/analyze`** (`route.js`) — the binding gate now lives on the route that triggers the HF queries (charging up-front closes the "never call `/api/attribute`" bypass). Flow: `hashFingerprint` → `checkCache` (same text/24h = free re-scan, no double-charge) → unauth-only IP flood breaker → `checkQuota` (429 on block) → `resolveScan` → `recordQuotaUsage` (+ IP log). Applies to authed tiers too (FREE/PRO limits were equally unenforced). Returns 429 `{error}` which `useAnalyze` already toasts.
@@ -478,7 +504,7 @@ Design language: glassmorphism (`backdrop-filter: blur(24px)`), gradient buttons
   - **Follow-up (prod build, `/api/dashboard` still ~2.3-2.6 s warm):** trimmed the route from **6 reads + 1 write to 4 reads**. (a) Removed the dev-admin `user.upsert` — it's redundant, the row is already created at login by `authorize()` in the NextAuth config (a missing row now just yields zeros/null until next sign-in, no crash). (b) Dropped `apiKey.count` (`keyCount`) and the QuotaUsage "recent activity" `findMany` (`recentScans`) — both were fetched but **never rendered** (the "Previous Uploads" table uses `pastScanResults`; `recentScans` was assigned to a dead const). Remaining reads (count, aggregate, user, scanResult.findMany) are all `userId`-indexed; residual cost is one parallel round-trip to remote Supabase. Session is JWT strategy, so `getServerSession` does **no** DB hit. Possible further wins if needed at beta scale: composite `@@index([userId, createdAt])` on QuotaUsage/ScanResult (needs `prisma db push`), client-side caching/SWR, or server-rendering the dashboard so data is fetched during SSR instead of a post-hydration round-trip.
 
 ### Fixed 2026-06-21
-- **🚩 0-byte PDF downloads in the browser (binary routes set `Content-Length` manually).** `/api/report` and `/api/report/convert` returned `new NextResponse(Buffer, { headers: { 'Content-Length': String(pdf.length) } })`. The hand-set `Content-Length` collides with the dev server's `Transfer-Encoding: chunked` → **browsers honor the declared length strictly and read 0 bytes**, while Node's `fetch`/undici is lenient and reads the full body. This made it brutal to diagnose: every server-side reproduction (node fetch of `/api/report`, direct `renderReportPdf`, the convert route) returned the full ~3.4 MB and hid the bug; only a real browser (or `curl`, which also honors `Content-Length`) showed 0 bytes. Confirmed via temp file-logging in the route: it logged `RENDERED pdfBytes=3459174` yet the browser got nothing — so the loss was purely in transport. **Fix: drop the manual `Content-Length` and return `new Uint8Array(pdf)` in both routes** — let the platform frame the response. Verified with `curl` (strict client) → full bytes. **Lesson: never hand-set `Content-Length` on a `NextResponse` binary body; return a `Uint8Array`/`Blob` and let Next set the length.** (The earlier "is the report engine broken?" rabbit hole — convert/overlay/fidelity — was a red herring; the history download is the plain `POST /api/report {scanId}` path and never touched Gotenberg.)
+- **🚩 0-byte PDF downloads — initially MIS-DIAGNOSED as a `Content-Length` collision; the actual cause was IDM (see 2026-06-23 entry).** History download POSTs went `200 + bytes` through curl/node-fetch, but the browser saw "status 204, blob size 0". I chased response framing for hours — removed manual `Content-Length`, switched to `new Uint8Array(pdf)`, then streaming `Response`, all of which were defensible but **not the bug**. The real cause turned out to be Internet Download Manager's browser integration silently intercepting any `fetch` to a `Content-Disposition: attachment` response and handing JS a fake 204. The response-framing changes are kept anyway (cleaner code, more robust against intermediaries), and the streaming `Response` pattern is now in §16 #14. **Lesson: ask for `r.status` / `r.statusText` early on download bugs (IDM names itself in `statusText`); see §16 #15.**
 - **Report fidelity pass (from real user QA on a 163-image/23-table DOCX):**
   - **Tables now exempt from the scan.** `/api/analyze` derives the scored text for DOCX from the reproduced HTML with `<table>` blocks stripped (`htmlToProseText()` in `file-parser.js`) instead of `mammoth.extractRawText` — so tabular data is NOT scored, NOT counted in the breakdown, and NOT highlighted. On the SABER file this exempted **2,837 words (~20%)** that were previously scored as prose. PDFs/TXT (no `sourceHtml`) are unchanged.
   - **Half-word highlighting fixed.** `report/highlight-injector.js` char-aligner could drift a few chars mid-word, splitting one word across two colors (e.g. "Yo"=ai + "be"=mixed). Added `snapLabelsToWords()` — majority vote per whitespace-delimited word, ties broken ai>mixed>human (mirrors `pdf-overlay.js`'s per-item vote, which never had the bug). Marks are now word-atomic.
@@ -561,7 +587,11 @@ Design language: glassmorphism (`backdrop-filter: blur(24px)`), gradient buttons
 
 13. **`/api/gradio-proxy` calls = Vercel Function Invocations.** Current plan is **Hobby (free) = 1M/month** (NOT a daily limit; exhaustion PAUSES the whole deployment). Hobby is also **non-commercial-only** — Jotril is commercial, so Pro is required before public launch. Budget is governed server-side via `UsageBudget`/budget-governor (§14/§15).
 
-14. **NEVER hand-set `Content-Length` on a binary `NextResponse` (PDF/file downloads).** It collides with the dev server's chunked transfer encoding → **browsers read 0 bytes** while Node's `fetch` reads the full body (so server-side tests pass and hide it). Return `new NextResponse(new Uint8Array(buf), { headers: { 'Content-Type', 'Content-Disposition', 'Cache-Control' } })` and let the platform set the length. To repro download bugs use `curl` (honors `Content-Length` like a browser), not node `fetch` (lenient). See §15 (0-byte downloads).
+14. **Hand-setting `Content-Length` on a binary `NextResponse` is usually fine, BUT** the symptoms can be confusing: with a buffered `NextResponse(Buffer, …)` we observed cases where the dev server simultaneously emitted `Transfer-Encoding: chunked` and the manual `Content-Length`, which some clients can't reconcile. Current pattern: **stream a `ReadableStream` with chunked enqueues** (`Response(stream, { headers: { 'Content-Type', 'Content-Length', 'Content-Disposition' } })`) — bytes flow eagerly, length is honest, downloads are robust. To repro download bugs use `curl` (honors `Content-Length` like a browser), NOT node `fetch` (lenient — hides bugs). See §15.
+
+15. **🚨 Download-accelerator extensions (IDM, FDM, some AVs) silently break `fetch`+blob downloads of attachments.** They hook ANY response with `Content-Disposition: attachment` received via `fetch()` and hand JavaScript a fake **204 / 0 bytes** while writing the real file to disk via their own UI. Symptoms: download works in curl, browser shows "0 bytes" / empty file via `fetch().blob()`; DevTools Response shows `204 Intercepted by the IDM Advanced Integration` or similar. **Rule: for any file the user is meant to save, trigger an `<a download href=…>` NAVIGATION to a GET endpoint instead of `fetch`+blob+`URL.createObjectURL`.** Native navigation downloads are what download managers expect; JS never reads the bytes so they can't be intercepted. We added `GET /api/report/download` precisely to give scanId downloads a navigation target (see §19). When debugging a "download is empty" bug: ALWAYS ask for the response status string (`console.log(r.status, r.statusText)`) early — IDM's interception is named in `statusText`.
+
+16. **GCS access from server routes uses the SAME service-account key as Cloud Run IAM (`GCP_SA_KEY`, base64-encoded JSON in env).** We deliberately don't add `@google-cloud/storage` — `lib/report-storage.js` mints an access token via `google-auth-library` and calls the GCS JSON REST API directly, keeping the dep surface small and the bundle thin. The same SA needs `roles/storage.objectAdmin` on the bucket in addition to `roles/run.invoker` on the Cloud Run service.
 
 ---
 
@@ -588,35 +618,68 @@ After every session where code changes are made:
 
 ---
 
-## 19. PDF Report Engine (rebuilt 2026-06-21)
+## 19. PDF Report Engine (rebuilt 2026-06-21, fidelity cache + IDM-proof downloads 2026-06-23)
 
-**Goal:** premium, faithful PDF reports — real tables/images, proper spacing & page-breaks — beating Turnitin on both fidelity and design. Engine = **headless Chrome** (renders an HTML/CSS template to PDF), chosen for pixel-perfect output + one-click download.
+**Goal:** premium, faithful PDF reports — real tables/images, proper spacing & page-breaks — beating Turnitin on both fidelity and design. **Two co-existing engines:**
+1. **Headless Chrome** renders the branded HTML template (cover + reconstructed body) — used as the standard/fallback path and for the cover page.
+2. **Gotenberg + LibreOffice** (self-hosted Cloud Run) converts the *original DOCX* to a faithful PDF with native charts/tables/formatting that mammoth can't reproduce. Run server-side as a background prewarm, output cached in GCS for instant downloads.
 
 **Flow:**
 ```
+SCAN COMPLETES → useAnalyze.processFinalResults:
+  POST /api/scan-results              → persisted, returns scanId
+  if DOCX:
+    POST /api/report/prewarm (file + scanId)  → background
+      → Gotenberg.convertDocxToPdf(file)      [DOCX → faithful PDF, slow on cold]
+      → buildHighlightedReport(pdf, chunks,   [pdf.js layout + word-level resync
+          coverPdf)                            mapper + pdf-lib rectangles + cover]
+      → uploadReport({userId}/{scanId}.pdf)   [GCS cache]
+
 "Download PDF" → downloadReport() [src/lib/download-report.js]
   ├─ PDF upload (File in hand) → overlayPDFReport() [pdf-overlay.js]: highlight original
-  │                               in-place (pdf-lib) + prepend cover from /api/report?cover=1
-  ├─ DOCX fresh scan + NEXT_PUBLIC_REPORT_FIDELITY_ENGINE=gotenberg (File in hand)
-  │     → POST /api/report/convert (DOCX→PDF via Gotenberg/LibreOffice) → overlayPDFReport()
-  │       [native charts/tables/formatting preserved]. 501/failure → falls through ↓
-  └─ DOCX / text / past scan    → POST /api/report → headless Chrome → PDF blob → download
+  │                                in-place (pdf-lib) + prepend cover from /api/report?cover=1
+  ├─ scanId present (fresh-after-save OR history) → IDM-PROOF DOWNLOAD:
+  │     HEAD /api/report/download?scanId=… (auth/ownership preflight)
+  │     <a href download> navigation to that GET endpoint
+  │       → GCS hit → stream cached high-fidelity PDF (Gotenberg + highlights + cover)
+  │       → GCS miss → headless Chrome render of stored sourceHtml/chunks
+  └─ No scanId (text scan before save) → POST /api/report → headless Chrome → blob download
 ```
-Highlight mapping for the overlay path is WORD-LEVEL resyncing (`pdf-overlay.js`
-`mapChunksToItems`): non-chunk PDF text (table cells exempt from scoring, page
-numbers, repeated headers) stays unhighlighted and never desyncs prose. The
-fidelity path is dormant until `GOTENBERG_URL` (server) + the public flag are set
-— recommended host Google Cloud Run (EU, 2GB, scale-to-zero). See §15.
 
-**Pieces:**
+Highlight mapping for both the client overlay (`pdf-overlay.js`) and the server overlay
+(`report/server-overlay.js`) is **WORD-LEVEL resyncing**: non-chunk PDF text (table
+cells exempt from scoring, page numbers, repeated headers) stays unhighlighted and
+never desyncs prose. The fidelity path activates whenever `GOTENBERG_URL`,
+`GCP_SA_KEY`, and `GCS_BUCKET` are set; otherwise prewarm is a 501 no-op and downloads
+silently use the standard render.
+
+**Pieces (additive in 2026-06-23):**
 - `src/lib/report/design-system.js` — tokens (brand navy/green, score colours), Inter (Google Fonts), `assessmentFor`, `donutSvg`, `escapeHtml`. Mirrors `globals.css`.
-- `src/lib/report/report-template.js` — `buildReportHtml(data)`: self-contained HTML + print CSS (cover/scorecard, donut exec-summary, document body, methodology, verification footer). Tables use `thead{display:table-header-group}` + `tr{break-inside:avoid}`; sections `break-before:page`. Also exports `headerFooterTemplates` (puppeteer running header/footer + page numbers).
-- `src/lib/report/highlight-injector.js` — `injectHighlights(chunks)` runs **inside the page via `page.evaluate`** (real DOM); ports the char-alignment mapper to wrap AI/mixed runs in `<mark>`. Used for the DOCX `sourceHtml` body; the text/past-scan body is reconstructed with marks baked in.
-- `src/lib/report/render.js` — `renderReportPdf(data)`: resolves Chrome (local exe in dev → `@sparticuz/chromium` on Vercel, by presence not env flags), **request-interception locks the page to data:/font URLs only** (SSRF / local-file safety), `page.pdf()` A4 with header/footer.
-- `src/app/api/report/route.js` — `runtime='nodejs'`, `maxDuration=60`. POST `{scanId}` (auth + ownership; fetches `sourceHtml`) or inline payload (guests OK); `?cover=1` = single cover page. Size caps: sourceHtml ≤8MB (else reconstruct), chunks ≤50k.
-- `src/app/api/report/convert/route.js` (NEW) — `runtime='nodejs'`, `maxDuration=60`. POST multipart `file` (DOCX) → proxies to `GOTENBERG_URL/forms/libreoffice/convert` (+ optional `GOTENBERG_AUTH` header) → returns faithful PDF. **501 when `GOTENBERG_URL` unset** (client falls back). 25MB cap. The high-fidelity DOCX path; pairs with `overlayPDFReport`.
+- `src/lib/report/report-template.js` — `buildReportHtml(data)`: self-contained HTML + print CSS. Also exports `headerFooterTemplates` (puppeteer running header/footer + page numbers).
+- `src/lib/report/highlight-injector.js` — `injectHighlights(chunks)` runs **inside the page via `page.evaluate`** (real DOM); wraps AI/mixed runs in `<mark>` with the same word-level resyncing mapper. Used for the DOCX `sourceHtml` body in the standard path.
+- `src/lib/report/render.js` — `renderReportPdf(data)`: resolves Chrome (local exe in dev → `@sparticuz/chromium` on Vercel by presence, not env flags), request-interception locks the page to `data:` / Google Fonts only, `page.pdf()` A4 with header/footer.
+- `src/lib/report/server-overlay.js` **(NEW 2026-06-23)** — Node port of the client overlay: pdf.js text-layout extraction, word-level resyncing chunk-to-item mapper (mirrors `pdf-overlay.js`), pdf-lib rectangle drawing, optional cover prepend. Used by the prewarm to bake highlights into the Gotenberg PDF before caching.
+- `src/lib/gotenberg.js` **(NEW 2026-06-23)** — `convertDocxToPdf(buffer, name)`. Mints a Google ID token (`GoogleAuth`) for an IAM-locked Cloud Run service with `GCP_SA_KEY`; falls back to `GOTENBERG_AUTH` static header. `gotenbergConfigured()` returns true iff `GOTENBERG_URL` is set.
+- `src/lib/report-storage.js` **(NEW 2026-06-23)** — GCS cache: `reportExists`, `uploadReport`, `downloadReport`. Uses the GCS JSON REST API + an access token minted from `GCP_SA_KEY` (no `@google-cloud/storage` dep added). `storageConfigured()` requires both `GCS_BUCKET` and `GCP_SA_KEY`. Key convention `${userId}/${scanId}.pdf`.
+- `src/app/api/report/route.js` — `runtime='nodejs'`, `maxDuration=60`. POST `{scanId}` (auth + ownership; **checks GCS cache first** when configured, then falls back to stored `sourceHtml`/chunks render); POST inline payload (guests OK); `?cover=1` = single cover page. Size caps: sourceHtml ≤8MB, chunks ≤50k.
+- `src/app/api/report/convert/route.js` — POST multipart `file` (DOCX) → Gotenberg → faithful PDF. **Currently orphaned** (kept for diagnostics; the prewarm path replaced its in-flow use).
+- `src/app/api/report/prewarm/route.js` **(NEW 2026-06-23)** — `runtime='nodejs'`, `maxDuration=60`. POST multipart `file` + `scanId` (auth + ownership). Idempotent (returns `{cached:true}` if the GCS object already exists). On miss: converts via Gotenberg → renders a cover-only PDF via headless Chrome → `buildHighlightedReport` → uploads to GCS. Returns 501 when fidelity engine or storage isn't configured.
+- `src/app/api/report/download/route.js` **(NEW 2026-06-23)** — `runtime='nodejs'`, `maxDuration=60`. **GET `?scanId=…`** (IDM-proof navigation download): auth + ownership → GCS cache → fallback render → stream PDF as attachment. **HEAD** = cheap preflight (auth/ownership only, no render) so the client can surface 401/404 before triggering the actual download.
+
+**Why the GET + navigation matters (IDM bug):**
+Internet Download Manager and similar extensions intercept any `Content-Disposition: attachment` response received by a `fetch()` and hand JavaScript a fake **204 / 0 bytes**, so `.blob()` reads empty. We saw this for hours before the DevTools console explicitly showed `Intercepted by the IDM Advanced Integration`. The fix is to never read attachment bodies via `fetch` from JS: a real `<a download>` navigation lets IDM/FDM/the browser handle the bytes natively. The GET endpoint exists specifically to give scanId downloads that navigation target. (See §16 gotcha.)
+
+**Auto-prewarm timing:**
+Fired in `useAnalyze.processFinalResults` AFTER `POST /api/scan-results` resolves (we need the `scanId`). Fire-and-forget — failure never blocks the UI. The Cloud Run cold start (~3–8s) happens while the user is reading the heatmap, so the eventual download is usually warm. If the user clicks Download before prewarm finishes, the GCS lookup misses and falls back to the standard render that one time; the cache is populated for next time.
+
+**Cost / capacity (beta):**
+- Cloud Run: scale-to-zero, free-tier covers ~50 testers easily.
+- GCS Standard EU: ~$0.02/GB-month; ~1–4MB per cached PDF; 50 testers × 20 docs ≈ 100MB ≈ $0.002/month. Lifecycle rule auto-deletes after 90 days to keep storage bounded.
+- Gotenberg invocations: roughly 1 per DOCX scan (not per download), because cache.
 
 **Gotchas:**
-- `next.config.mjs` adds `puppeteer-core` + `@sparticuz/chromium` to `serverExternalPackages`, traces the chromium bin via `outputFileTracingIncludes['/api/report']`, and aliases `canvas` → `src/lib/empty-module.js` (Turbopack) so pdfjs-dist's `require("canvas")` doesn't break the client build.
-- Data shape: `chunks=[{text,label('human'|'mixed'|'ai'),score,para}]`, `breakdown={human,mixed,ai}` (string %), `overallLabel`, `sourceHtml` (DOCX only).
+- `next.config.mjs` adds `puppeteer-core`, `@sparticuz/chromium`, `pdfjs-dist`, `pdf-lib`, `google-auth-library` to `serverExternalPackages`; traces the chromium binary for both `/api/report` and `/api/report/prewarm`; and aliases `canvas` → `src/lib/empty-module.js` for Turbopack.
+- pdf.js in Node emits two cosmetic "Cannot polyfill DOMMatrix/Path2D" warnings (it tries to require `canvas`). Harmless — text extraction works without it.
+- Bucket name must be **all lowercase** (`jotril-glutenberg-reports-eu`). GCS rejects mixed case.
 - If the headless render fails in prod, verify the chromium binary was traced (size limit) — consider `@sparticuz/chromium-min` + remote brotli pack.
+- Data shape: `chunks=[{text,label('human'|'mixed'|'ai'),score,para}]`, `breakdown={human,mixed,ai}` (string %), `overallLabel`, `sourceHtml` (DOCX only).

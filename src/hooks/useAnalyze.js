@@ -3,6 +3,11 @@
 import { useState, useCallback, useRef } from "react";
 import { useProcess } from "@/components/ProcessContext";
 import { showToast } from "@/components/Toast";
+import { resilientFetch } from "@/lib/resilient-fetch";
+
+const isDocxFile = (file) => !!file && (/\.docx?$/i.test(file.name || "") ||
+    file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    file.type === "application/msword");
 
 /**
  * Shared scan state optimized for Global Queue background decoupling.
@@ -35,6 +40,9 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
     const [scannedFile, setScannedFile] = useState(null);
     const [sourceHtml, setSourceHtml] = useState(null);
     const [lastText, setLastText] = useState("");
+    // Persisted scan id (set after the scan is saved) — lets the download button
+    // hit the GCS-cached high-fidelity report instead of re-rendering inline.
+    const [lastScanId, setLastScanId] = useState(null);
 
     const resetResults = useCallback(() => {
         setResults(null);
@@ -42,6 +50,7 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
         setOverallLabel("");
         setScannedFile(null);
         setSourceHtml(null);
+        setLastScanId(null);
     }, []);
 
     const processFinalResults = useCallback((finalChunks, html = null, file = null) => {
@@ -82,25 +91,47 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
 
         setResults(computedResults);
 
-        // Persist the scan for logged-in users (history + PDF download). Best-effort and
-        // fire-and-forget: guests get a silent 401, and a save failure never blocks the UI.
-        try {
-            const wordCount = computedResults.reduce((n, r) => n + (r.text ? r.text.trim().split(/\s+/).filter(Boolean).length : 0), 0);
-            fetch("/api/scan-results", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    filename: file?.name || "Pasted Text",
-                    type: file ? "DOCUMENT" : "TEXT",
-                    wordCount,
-                    sentenceCount: computedResults.length,
-                    overallLabel: ovl,
-                    breakdown,
-                    chunks: computedResults.map(r => ({ text: r.text, label: r.label, score: r.score, para: r.para })),
-                    sourceHtml: html || null, // reproduced document HTML (DOCX) → high-fidelity past-scan PDFs
-                })
-            }).catch(() => { /* offline / guest — ignore */ });
-        } catch { /* ignore persistence errors */ }
+        // Persist the scan (history + PDF download), then prewarm the high-fidelity
+        // report in the background. Best-effort: guests get a silent 401 and any
+        // failure never blocks the UI.
+        (async () => {
+            try {
+                const wordCount = computedResults.reduce((n, r) => n + (r.text ? r.text.trim().split(/\s+/).filter(Boolean).length : 0), 0);
+                const saveRes = await resilientFetch("/api/scan-results", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        filename: file?.name || "Pasted Text",
+                        type: file ? "DOCUMENT" : "TEXT",
+                        wordCount,
+                        sentenceCount: computedResults.length,
+                        overallLabel: ovl,
+                        breakdown,
+                        chunks: computedResults.map(r => ({ text: r.text, label: r.label, score: r.score, para: r.para })),
+                        sourceHtml: html || null, // reproduced document HTML (DOCX) → high-fidelity past-scan PDFs
+                    }),
+                    retry: true, // history save is best-effort; retry survives a brief drop
+                    timeoutMs: 15000,
+                });
+                if (!saveRes?.ok) return;
+                const saved = await saveRes.json().catch(() => null);
+                const scanId = saved?.id;
+                if (scanId) setLastScanId(scanId);
+
+                // Phase B of the prewarm: highlight + cover + final cache. The
+                // slow DOCX→PDF conversion was already kicked off at upload (Phase
+                // A in handleAnalyze) and is reused here by file hash, so this is
+                // usually just the fast overlay + upload. Fire-and-forget.
+                if (scanId && isDocxFile(file)) {
+                    const fd = new FormData();
+                    fd.append("file", file);
+                    fd.append("scanId", scanId);
+                    fetch("/api/report/prewarm", { method: "POST", body: fd })
+                        .then(r => { if (!r.ok) console.warn("[Prewarm] HTTP", r.status); })
+                        .catch(e => console.warn("[Prewarm] failed:", e.message));
+                }
+            } catch { /* offline / guest / prewarm failure — ignore */ }
+        })();
 
         if (onAfterComplete) onAfterComplete();
     }, [onAfterComplete]);
@@ -121,14 +152,37 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
 
         openProcess("analyze", "Parsing Document", "Extracting textual semantics locally...", cancelAnalysis);
 
+        // Phase A of the high-fidelity prewarm: kick off the Gotenberg DOCX→PDF
+        // conversion NOW, in parallel with the scan, so its Cloud Run cold start
+        // is absorbed while the HF queries run instead of being serialized after
+        // them. The result is cached by file hash; the scan-complete prewarm
+        // (Phase B in processFinalResults) reuses it and skips Gotenberg. No
+        // scanId yet — that's the whole point. Fire-and-forget; guests 401.
+        if (isDocxFile(file)) {
+            const convFd = new FormData();
+            convFd.append("file", file);
+            fetch("/api/report/prewarm", { method: "POST", body: convFd })
+                .then(r => { if (!r.ok) console.warn("[Prewarm] parallel convert HTTP", r.status); })
+                .catch(e => console.warn("[Prewarm] parallel convert failed:", e.message));
+        }
+
         try {
             const formData = new FormData();
             if (text?.trim()) formData.append("text", text);
             if (file) formData.append("file", file);
             if (deviceHash) formData.append("hardwareFootprint", JSON.stringify(deviceHash));
 
-            // 1. Offload Heavy Chunking directly to Edge Route Server
-            const res = await fetch("/api/analyze", { method: "POST", body: formData, signal });
+            // 1. Offload Heavy Chunking directly to Edge Route Server.
+            // resilientFetch retries on transient 5xx/network errors with jittered
+            // backoff and applies a per-attempt timeout — bad networks no longer
+            // turn a flaky upload into "Networking Failure" toast spam.
+            const res = await resilientFetch("/api/analyze", {
+                method: "POST",
+                body: formData,
+                signal,
+                retry: true, // analyze is idempotent enough — same input → same scenarios
+                timeoutMs: 45000, // file parsing can be slow on big PDFs
+            });
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
                 showToast(data.error || "Analysis engine failure.", "error");
@@ -177,11 +231,15 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
                     const executedQueries = scores.filter(s => s != null).length;
 
                     // Run the full attribution engine server-side (needs EngineConfig/Prisma).
-                    const attrRes = await fetch("/api/attribute", {
+                    // retry:true because attribute is pure CPU + a budget reconcile;
+                    // a duplicated reconcile just refunds twice harmlessly.
+                    const attrRes = await resilientFetch("/api/attribute", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ sentences, scenarios, scores, estimate, monthKey, callsPerQuery, executedQueries }),
-                        signal
+                        signal,
+                        retry: true,
+                        timeoutMs: 30000,
                     });
 
                     if (cancelledRef.current) return; // cancelled during attribution
@@ -215,6 +273,6 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
 
     return {
         results, breakdown, overallLabel, handleAnalyze,
-        isActive, resetResults, scannedFile, sourceHtml, lastText
+        isActive, resetResults, scannedFile, sourceHtml, lastText, lastScanId
     };
 }

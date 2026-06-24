@@ -41,8 +41,37 @@ export class JotrilServiceError extends Error {
  */
 export const proxyStats = { calls: 0 };
 
+// Per-request hard ceiling for proxy round-trips. Without this, a stuck poll
+// could hang the worker for minutes (browsers don't time out fetch on their
+// own). The bound is longer than a worst-case cold-start poll but shorter
+// than the queue's overall job-level retry budget, so one dead request can't
+// condemn a chunk on a flaky link.
+const PROXY_REQUEST_TIMEOUT_MS = 30000;
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+    const ctrl = new AbortController();
+    const t = setTimeout(
+        () => ctrl.abort(new DOMException('Proxy request timed out', 'TimeoutError')),
+        timeoutMs
+    );
+    try {
+        if (options.signal && !options.signal.aborted) {
+            options.signal.addEventListener(
+                'abort',
+                () => ctrl.abort(options.signal.reason),
+                { once: true }
+            );
+        }
+        return await fetch(url, { ...options, signal: ctrl.signal });
+    } finally {
+        clearTimeout(t);
+    }
+}
+
 /**
- * Proxy Wrapper fetching tool.
+ * Proxy Wrapper fetching tool. Each call counts as one Vercel invocation and
+ * is bounded by PROXY_REQUEST_TIMEOUT_MS — a stuck proxy can no longer hang
+ * the worker indefinitely.
  */
 async function secureFetch(targetUrl, options = {}) {
     proxyStats.calls++;
@@ -57,15 +86,15 @@ async function secureFetch(targetUrl, options = {}) {
         if (process.env.HF_TOKEN) {
             headers['Authorization'] = `Bearer ${process.env.HF_TOKEN}`;
         }
-        return fetch(targetUrl, { ...options, headers });
+        return fetchWithTimeout(targetUrl, { ...options, headers }, PROXY_REQUEST_TIMEOUT_MS);
     }
 
     // Client-side: route through the Edge proxy so HF_TOKEN never reaches the browser.
-    return fetch('/api/gradio-proxy', {
+    return fetchWithTimeout('/api/gradio-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targetUrl, options })
-    });
+    }, PROXY_REQUEST_TIMEOUT_MS);
 }
 
 /**
@@ -199,7 +228,11 @@ export async function queryJotrilModel(text, spaceName) {
                 }
 
                 if (result) break; // Finished successfully
-                await new Promise(r => setTimeout(r, 450));
+                // Jitter the poll cadence (400-650ms). Workers run in lockstep
+                // otherwise — a synchronized burst across 60+ concurrent polls
+                // hammers the proxy in waves and is exactly what bad networks
+                // cope with worst.
+                await new Promise(r => setTimeout(r, 400 + Math.random() * 250));
             }
 
             if (!result) throw new Error('Proxy Polling Timeout Extinguished');
@@ -215,7 +248,11 @@ export async function queryJotrilModel(text, spaceName) {
             // same HF user quota), so stay put and just back off.
             if (error instanceof JotrilServiceError && error.type === 'RATE_LIMIT') {
                 retryCount++;
-                const delay = Math.min(2000 * Math.pow(1.5, retryCount), 10000);
+                // Jittered exponential backoff. Pure 1.5^N timing makes every
+                // throttled worker retry at the same instant, which just
+                // re-trips the 429. The 0-500ms jitter spreads the herd.
+                const base = Math.min(2000 * Math.pow(1.5, retryCount), 10000);
+                const delay = base + Math.floor(Math.random() * 500);
                 console.log(`[JotrilProxyService] Space ${currentSpace} rate limited. Retreating for ${delay}ms...`);
                 await new Promise(r => setTimeout(r, delay));
                 continue;
@@ -230,7 +267,9 @@ export async function queryJotrilModel(text, spaceName) {
             const nextSpace = SPACES[(startIdx + retryCount) % SPACES.length];
             console.warn(`[JotrilProxyService] ${currentSpace} failed (${error.message}); failing over to ${nextSpace} (attempt ${retryCount}/${MAX_RETRIES})`);
             currentSpace = nextSpace;
-            await new Promise(r => setTimeout(r, 1000));
+            // Jittered backoff before failover so simultaneous failures across
+            // workers don't all hit the next Space at the same millisecond.
+            await new Promise(r => setTimeout(r, 800 + Math.floor(Math.random() * 600)));
         }
     }
 }

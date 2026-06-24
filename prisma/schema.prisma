@@ -192,6 +192,7 @@ model TuningRun {
   message      String? // Current activity status (e.g. "Analyzing linguistic patterns...")
   error        String?
   createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt // Heartbeat — every progress write touches this. Used to detect dead in-process runs (dev restart / Fast Refresh / crash) that never reached a terminal status.
   completedAt  DateTime?
 
   @@index([datasetId])
