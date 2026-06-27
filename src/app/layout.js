@@ -2,6 +2,7 @@ import "./globals.css";
 import Providers from "@/components/Providers";
 import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import GlitchFavicon from "@/components/GlitchFavicon";
 
 // System Font Fallback to ensure build success without external fetch
 const geistSans = {
@@ -40,6 +41,7 @@ export default function RootLayout({ children }) {
         >
             <body suppressHydrationWarning className="min-h-full flex flex-col">
                 <Providers>{children}</Providers>
+                <GlitchFavicon />
                 <Analytics />
                 <SpeedInsights />
             </body>
