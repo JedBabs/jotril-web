@@ -288,7 +288,7 @@ export default function AdminDashboardPage() {
                                         const tc = tierColors[r] || tierColors.FREE;
                                         return (
                                             <motion.button key={r} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                                                onClick={() => handleUpdateUser({ newRole: r })}
+                                                onClick={() => handleUpdateUser({ role: r })}
                                                 disabled={selectedUser.role === r}
                                                 className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${selectedUser.role === r
                                                     ? `${tc.bg} ${tc.border} ${tc.text} cursor-default`
@@ -774,12 +774,17 @@ function AutoTunePanel() {
         }
     };
 
-    const startTuning = async (id) => {
+    const startTuning = async (id, { rebuildCache = false } = {}) => {
+        if (rebuildCache && !confirm('Re-query the model and rebuild the score cache from scratch? This is slower (re-runs all HF queries) but picks up model changes and discards a degraded cache.')) return;
         try {
-            const res = await fetch(`/api/admin/auto-tune/${id}/run`, { method: 'POST' });
+            const res = await fetch(`/api/admin/auto-tune/${id}/run`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rebuildCache }),
+            });
             const data = await res.json();
             if (data.success) {
-                showToast('Tuning run started in background!', 'info');
+                showToast(rebuildCache ? 'Tuning run started (rebuilding cache)!' : 'Tuning run started in background!', 'info');
                 connectToRun(id);
             } else {
                 showToast(data.error || 'Startup failed', 'error');
@@ -1135,6 +1140,18 @@ function AutoTunePanel() {
                                                 >
                                                     {isDeleting === ds.id ? <RotateCcw className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                                                 </button>
+
+                                                {ds.hasCachedScores && (
+                                                    <button
+                                                        onClick={() => startTuning(ds.id, { rebuildCache: true })}
+                                                        disabled={activeRunId !== null || isDeleting !== null || isApplying !== null}
+                                                        className="flex items-center gap-2 text-sm font-bold text-ash bg-white hover:bg-surface border border-silver !rounded-full px-4 py-2.5 transition-all disabled:opacity-40"
+                                                        title="Re-query the model and rebuild the score cache before tuning"
+                                                    >
+                                                        <RotateCcw className="w-4 h-4" />
+                                                        Rebuild Cache
+                                                    </button>
+                                                )}
 
                                                 <button
                                                     onClick={() => startTuning(ds.id)}

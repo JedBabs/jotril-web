@@ -80,6 +80,11 @@ export function prepareDocuments(rawSamples) {
 // 2. SCORE CACHE BUILDING (One-time model queries)
 // ═══════════════════════════════════════════════════════════════════════════
 
+// If more than this fraction of model queries fail during cache building, abort
+// the whole run rather than silently caching neutral-50 fallbacks (which would
+// poison every subsequent tuning run that reuses the cache). 0.35 = 35%.
+export const MAX_NULL_RATE = 0.35;
+
 /**
  * Runs the full chunking + model query pipeline for each document.
  * Returns a cache structure that can be reused for thousands of config evaluations.
@@ -124,10 +129,23 @@ export async function buildScoreCache(documents, onProgress, checkCancel = null)
         }, checkCancel, 16, 0);
     }
 
-    // Step 4: Validate — warn but don't crash on partial failures
+    // Step 4: Validate failure rate. Failed/timed-out queries fall back to a
+    // neutral 50 (Step 5) — a few are harmless, but a HIGH null rate (cold/down
+    // HF Spaces) silently poisons the cache, and that cache is then reused on
+    // every future run. So abort loudly past a threshold instead of caching
+    // garbage; the run route surfaces this as FAILED and does NOT save the cache.
     const nullCount = rawResults.filter(r => !r).length;
+    const nullRate = textsToQuery.length > 0 ? nullCount / textsToQuery.length : 0;
+    if (nullRate > MAX_NULL_RATE) {
+        throw new Error(
+            `Score cache aborted: ${nullCount}/${textsToQuery.length} model queries failed ` +
+            `(${(nullRate * 100).toFixed(0)}% > ${(MAX_NULL_RATE * 100).toFixed(0)}% limit). ` +
+            `HF Spaces are likely cold or down — wait for them to warm up and retry. ` +
+            `Cache was NOT saved (a degraded cache would poison every future tuning run).`
+        );
+    }
     if (nullCount > 0) {
-        console.warn(`⚠️ [Auto-Tune] ${nullCount}/${textsToQuery.length} queries returned null (timed out). Using neutral score (50) for these.`);
+        console.warn(`⚠️ [Auto-Tune] ${nullCount}/${textsToQuery.length} queries returned null (${(nullRate * 100).toFixed(0)}%, under the ${(MAX_NULL_RATE * 100).toFixed(0)}% abort threshold). Using neutral score (50) for these.`);
     }
 
     // Step 5: Process and cache scores globally
@@ -171,7 +189,7 @@ export async function buildScoreCache(documents, onProgress, checkCancel = null)
     }
 
     if (checkCancel) await checkCancel();
-    await onProgress?.(100, `Model querying complete (${textDedup.size} unique texts cached)`);
+    await onProgress?.(100, `Model querying complete (${textDedup.size} unique texts cached${nullCount > 0 ? `, ${(nullRate * 100).toFixed(0)}% fallback` : ''})`);
     return cache;
 }
 
@@ -520,6 +538,29 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
         }
     }
 
+    // Builds the complete result object — train/test/full metrics + split info.
+    // The deadline-triggered early returns (Phase 1/2/2.5) call this so a
+    // time-limited run reports the SAME shape as a full completion. Without it,
+    // an early return omitted trainMetrics/testMetrics/splitInfo, surfacing as
+    // "Train: undefined% | Test: undefined%" and a broken before/after panel,
+    // and reported a train-set (overfit) number with no held-out validation.
+    function finalizeResult() {
+        topTrials.sort((a, b) => b.objective - a.objective);
+        return {
+            bestConfig,
+            bestMetrics: evaluateConfig(cache, bestConfig),      // full dataset
+            trainMetrics: evaluateConfig(trainCache, bestConfig),
+            testMetrics: evaluateConfig(testCache, bestConfig),  // held-out generalization
+            trialCount: totalTrials,
+            topTrials: topTrials.slice(0, 20),
+            splitInfo: {
+                trainSize: trainCache.length,
+                testSize: testCache.length,
+                totalSize: cache.length,
+            },
+        };
+    }
+
     // ── PHASE 1: Coarse sweep of most impactful parameters ────────────
     await onProgress?.(0, 'Phase 1: Coarse sweep of primary parameters...', 0);
 
@@ -559,17 +600,15 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
         // Time-based progress updates (at most every 2 seconds)
         const now = Date.now();
         if (now - lastProgressUpdate >= 2000 || i === coarseTotal - 1) {
-            await onProgress?.(Math.round((i / coarseTotal) * 33), `Phase 1: ${i}/${coarseTotal} combos (best MCC: ${bestScore.toFixed(4)})`, totalTrials);
+            await onProgress?.(Math.round((i / coarseTotal) * 33), `Phase 1: ${i}/${coarseTotal} combos (best obj: ${bestScore.toFixed(4)})`, totalTrials);
             lastProgressUpdate = now;
         }
 
         // Deadline check
         if (deadline && now > deadline) {
             console.warn("[Auto-Tune] Execution deadline reached during Phase 1. Stopping early.");
-            await onProgress?.(100, `Complete (Time Limit Reached). Best MCC: ${bestScore.toFixed(4)}`, totalTrials);
-            return {
-                bestConfig, bestMetrics, trialCount: totalTrials, topTrials: topTrials.slice(0, 20),
-            };
+            await onProgress?.(100, `Complete (Time Limit Reached). Best obj: ${bestScore.toFixed(4)}`, totalTrials);
+            return finalizeResult();
         }
     }
 
@@ -605,14 +644,12 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
         }
 
         const paramProgress = 33 + Math.round(((allParams.indexOf(paramPath) + 1) / allParams.length) * 33);
-        await onProgress?.(paramProgress, `Phase 2: Sweeping ${paramPath} (best MCC: ${bestScore.toFixed(4)})`, totalTrials);
+        await onProgress?.(paramProgress, `Phase 2: Sweeping ${paramPath} (best obj: ${bestScore.toFixed(4)})`, totalTrials);
 
         if (deadline && Date.now() > deadline) {
             console.warn("[Auto-Tune] Execution deadline reached during Phase 2. Stopping early.");
-            await onProgress?.(100, `Complete (Time Limit Reached). Best MCC: ${bestScore.toFixed(4)}`, totalTrials);
-            return {
-                bestConfig, bestMetrics, trialCount: totalTrials, topTrials: topTrials.slice(0, 20),
-            };
+            await onProgress?.(100, `Complete (Time Limit Reached). Best obj: ${bestScore.toFixed(4)}`, totalTrials);
+            return finalizeResult();
         }
     }
 
@@ -664,16 +701,14 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
 
         await onProgress?.(
             66 + Math.round(((pairIdx + 1) / interactionPairs.length) * 17),
-            `Phase 2.5: Pair ${p1} × ${p2} (best MCC: ${bestScore.toFixed(4)})`,
+            `Phase 2.5: Pair ${p1} × ${p2} (best obj: ${bestScore.toFixed(4)})`,
             totalTrials
         );
 
         if (deadline && Date.now() > deadline) {
             console.warn("[Auto-Tune] Execution deadline reached during Phase 2.5. Stopping early.");
-            await onProgress?.(100, `Complete (Time Limit Reached). Best MCC: ${bestScore.toFixed(4)}`, totalTrials);
-            return {
-                bestConfig, bestMetrics, trialCount: totalTrials, topTrials: topTrials.slice(0, 20),
-            };
+            await onProgress?.(100, `Complete (Time Limit Reached). Best obj: ${bestScore.toFixed(4)}`, totalTrials);
+            return finalizeResult();
         }
     }
 
@@ -713,7 +748,7 @@ export async function runExhaustiveSearch(cache, onProgress, deadline = null) {
 
         await onProgress?.(
             83 + Math.round(((pass + 1) / 3) * 17),
-            `Phase 3 pass ${pass + 1}/3 (best MCC: ${bestScore.toFixed(4)})`,
+            `Phase 3 pass ${pass + 1}/3 (best obj: ${bestScore.toFixed(4)})`,
             totalTrials
         );
 

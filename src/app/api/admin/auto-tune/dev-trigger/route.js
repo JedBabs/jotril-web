@@ -4,23 +4,40 @@ import getPrisma from '@/lib/prisma';
 import { runExhaustiveSearch } from '@/lib/auto-tuner';
 import { after } from 'next/server';
 
-// Simple lock to prevent overlapping runs
-let runningRunId = null;
+// Same heartbeat-staleness threshold as the main /run route. An "active" run
+// untouched for this long is presumed dead (worker process gone) and reclaimed.
+const STALE_RUN_MS = 120_000; // 2 min
 
+// Local-dev escape hatch: runs the grid search to FULL exhaustion (no deadline)
+// against an ALREADY-cached dataset. Shares the same TuningRun lifecycle as the
+// main /run route — it no longer keeps a fragile in-memory lock and no longer
+// wipes COMPLETE history (it only reclaims dead runs + clears prior dead rows).
 export async function GET(req) {
-    if (runningRunId) {
-        return NextResponse.json({ error: 'A run is already active', runId: runningRunId }, { status: 409 });
-    }
-
     const prisma = getPrisma();
     const dataset = await prisma.tuningDataset.findFirst();
     if (!dataset || !dataset.scoreCache) {
         return NextResponse.json({ error: 'No dataset or score cache found' }, { status: 404 });
     }
 
-    // Clean up ALL old runs for this dataset
+    // Refuse if a genuinely-live run exists; reclaim it if its heartbeat is stale.
+    const active = await prisma.tuningRun.findFirst({
+        where: { datasetId: dataset.id, status: { in: ['PENDING', 'CACHING', 'TUNING'] } },
+        orderBy: { createdAt: 'desc' },
+    });
+    if (active) {
+        const age = Date.now() - new Date(active.updatedAt).getTime();
+        if (age < STALE_RUN_MS) {
+            return NextResponse.json({ error: 'A run is already active', runId: active.id }, { status: 409 });
+        }
+        await prisma.tuningRun.update({
+            where: { id: active.id },
+            data: { status: 'FAILED', error: 'Run abandoned (no heartbeat — worker process died). Auto-reclaimed.', completedAt: new Date() },
+        });
+    }
+
+    // Clear only DEAD runs — keep COMPLETE history so the UI/apply still see it.
     await prisma.tuningRun.deleteMany({
-        where: { datasetId: dataset.id }
+        where: { datasetId: dataset.id, status: { in: ['FAILED', 'CANCELLED'] } }
     });
 
     // Create a single new run
@@ -32,8 +49,6 @@ export async function GET(req) {
             message: 'Grid search starting...'
         }
     });
-
-    runningRunId = run.id;
 
     after(async () => {
         const cache = dataset.scoreCache;
@@ -87,8 +102,6 @@ export async function GET(req) {
                     data: { status: 'FAILED', error: err.message?.substring(0, 500) }
                 });
             } catch (_) { }
-        } finally {
-            runningRunId = null;
         }
     });
 

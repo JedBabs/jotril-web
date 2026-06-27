@@ -159,6 +159,7 @@ export async function GET(req) {
                         status: true,
                         progress: true,
                         message: true,
+                        error: true,
                         bestAccuracy: true,
                         bestMcc: true,
                         metrics: true,
@@ -170,6 +171,11 @@ export async function GET(req) {
             },
             orderBy: { createdAt: 'desc' },
         });
+
+        // Determine which datasets have a populated score cache WITHOUT loading the
+        // heavy JSON blob (the select above deliberately excludes scoreCache).
+        const cacheRows = await prisma.$queryRaw`SELECT id, ("scoreCache" IS NOT NULL) AS "hasCache" FROM "TuningDataset"`;
+        const cacheMap = new Map(cacheRows.map(r => [r.id, r.hasCache]));
 
         const masterExists = datasets.some(ds => ds.name === 'Master Dataset');
 
@@ -192,6 +198,7 @@ export async function GET(req) {
                 humanCount: half,
                 aiCount: (ds.sampleCount || 0) - half,
                 latestRun: ds.runs[0] || null,
+                hasCachedScores: !!cacheMap.get(ds.id),
                 createdAt: ds.createdAt,
             };
         });

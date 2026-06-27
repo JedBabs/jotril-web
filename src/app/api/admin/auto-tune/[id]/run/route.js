@@ -8,6 +8,10 @@ import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { prepareDocuments, buildScoreCache, runExhaustiveSearch, evaluateConfig } from '@/lib/auto-tuner';
 import { getEngineConfig } from '@/lib/chunking';
 
+// An "active" run whose `updatedAt` heartbeat is older than this is presumed dead
+// (worker process gone) and reclaimed. Progress writes bump the heartbeat ~every 2.5s.
+const STALE_RUN_MS = 120_000; // 2 min
+
 // ── POST: Start a tuning run (Returns immediately) ───────────────────────
 export async function POST(req, { params }) {
     const session = await getServerSession(authOptions);
@@ -18,19 +22,45 @@ export async function POST(req, { params }) {
     const { id } = await params;
     const prisma = getPrisma();
 
+    // Optional body: { rebuildCache: true } forces a fresh score cache (re-queries
+    // the model) instead of reusing the sticky stored one. Body is optional —
+    // the UI's plain "Run" sends none.
+    let forceRebuild = false;
+    try {
+        const body = await req.json();
+        forceRebuild = !!body?.rebuildCache;
+    } catch { /* no body — normal run */ }
+
     // Fetch the dataset
     const dataset = await prisma.tuningDataset.findUnique({ where: { id } });
     if (!dataset) {
         return NextResponse.json({ error: 'Dataset not found' }, { status: 404 });
     }
 
-    // Check if there's already an active run for this dataset
+    // Check if there's already an active run for this dataset.
+    // ⚠️ The work runs in an in-process `after()` task. If that process dies
+    // mid-run (dev-server restart, Turbopack Fast Refresh, crash, redeploy) the
+    // row is left stuck at PENDING/CACHING/TUNING forever and would otherwise
+    // permanently jam the dataset. Every progress write bumps `updatedAt`
+    // (@updatedAt heartbeat, throttled to ~2.5s while running), so an "active"
+    // run that hasn't been touched in STALE_RUN_MS is presumed dead and reclaimed.
     const activeRun = await prisma.tuningRun.findFirst({
-        where: { datasetId: id, status: { in: ['PENDING', 'CACHING', 'TUNING'] } }
+        where: { datasetId: id, status: { in: ['PENDING', 'CACHING', 'TUNING'] } },
+        orderBy: { createdAt: 'desc' },
     });
 
     if (activeRun) {
-        return NextResponse.json({ success: true, runId: activeRun.id, message: 'Continuing active run' });
+        const age = Date.now() - new Date(activeRun.updatedAt).getTime();
+        if (age < STALE_RUN_MS) {
+            // Genuinely still running — attach to it instead of starting a duplicate.
+            return NextResponse.json({ success: true, runId: activeRun.id, message: 'Continuing active run' });
+        }
+        // Stale — the worker is gone. Mark it FAILED so it stops blocking + confusing the SSE poller.
+        console.warn(`[Auto-Tune] Reclaiming stale ${activeRun.status} run ${activeRun.id} (no heartbeat for ${Math.round(age / 1000)}s).`);
+        await prisma.tuningRun.update({
+            where: { id: activeRun.id },
+            data: { status: 'FAILED', error: 'Run abandoned (no heartbeat — worker process died). Auto-reclaimed.', completedAt: new Date() },
+        });
     }
 
     // Clean up ALL old dead runs for this dataset so they don't confuse the SSE poller
@@ -45,7 +75,7 @@ export async function POST(req, { params }) {
 
     // Start tuning in background
     after(() => {
-        runTuningInBackground(run.id, id, dataset.samples);
+        runTuningInBackground(run.id, id, dataset.samples, forceRebuild);
     });
 
     return NextResponse.json({ success: true, runId: run.id });
@@ -55,7 +85,7 @@ export async function POST(req, { params }) {
  * Background worker for the tuning process.
  * Updates the database persistently so it survives browser closure.
  */
-async function runTuningInBackground(runId, datasetId, rawSamples) {
+async function runTuningInBackground(runId, datasetId, rawSamples, forceRebuild = false) {
     const startTime = Date.now();
 
     const prisma = getPrisma();
@@ -99,9 +129,12 @@ async function runTuningInBackground(runId, datasetId, rawSamples) {
         let lastDbUpdate = Date.now();
         const DB_UPDATE_INTERVAL_MS = 2500; // Update DB at most every 2.5 seconds
 
-        if (dataset.scoreCache) {
+        if (dataset.scoreCache && !forceRebuild) {
             cache = dataset.scoreCache;
         } else {
+            if (forceRebuild && dataset.scoreCache) {
+                console.log(`[Auto-Tune] Force-rebuild requested — ignoring existing score cache for dataset ${datasetId}.`);
+            }
             await prisma.tuningRun.update({
                 where: { id: runId },
                 data: { status: 'CACHING', progress: 10, message: '🔍 Analyzing linguistic patterns for cache (Phase 1)...' }
@@ -266,6 +299,19 @@ export async function GET(req, { params }) {
                     clearInterval(pollInterval);
                     controller.close();
                     return;
+                }
+
+                // Detect a dead worker: an "active" run whose heartbeat went stale.
+                // Flip it to FAILED so this poller (and the dataset) stop treating it
+                // as live — the client's FAILED branch then closes + refreshes.
+                if (['PENDING', 'CACHING', 'TUNING'].includes(run.status) &&
+                    Date.now() - new Date(run.updatedAt).getTime() > STALE_RUN_MS) {
+                    try {
+                        run = await prisma.tuningRun.update({
+                            where: { id: run.id },
+                            data: { status: 'FAILED', error: 'Run abandoned (no heartbeat — worker process died). Auto-reclaimed.', completedAt: new Date() },
+                        });
+                    } catch { /* another caller may have reclaimed it first */ }
                 }
 
                 // If updated, send to client

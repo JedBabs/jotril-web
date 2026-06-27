@@ -30,11 +30,18 @@ export async function POST(req, { params }) {
         const existing = await prisma.engineConfig.findUnique({ where: { id: 'global' } });
         const previousData = existing?.data || null;
 
+        // The tuner only optimizes detection params (signalWeights, windowConfidence,
+        // anchorThreshold, classification, smoothing, burstiness) — it has no `budget`
+        // key. A wholesale overwrite would silently reset the budget-governor block to
+        // defaults, so carry the existing budget settings forward.
+        const mergedConfig = { ...run.bestConfig };
+        if (existing?.data?.budget) mergedConfig.budget = existing.data.budget;
+
         // Apply the tuned config
         await prisma.engineConfig.upsert({
             where: { id: 'global' },
-            update: { data: run.bestConfig, previousData },
-            create: { id: 'global', data: run.bestConfig, previousData },
+            update: { data: mergedConfig, previousData },
+            create: { id: 'global', data: mergedConfig, previousData },
         });
 
         // Invalidate in-memory cache
