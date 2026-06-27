@@ -114,8 +114,7 @@ function ProductCard({ product, index }) {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ delay: index * 0.12, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-            whileHover={isLive ? { y: -8, scale: 1.02 } : { y: -4 }}
-            className={`bento-spotlight glass-card rounded-3xl p-8 relative group overflow-hidden cursor-pointer h-full flex flex-col ${isLive ? "ring-2 ring-[var(--dyn-accent-blue)]/30" : ""}`}
+            className={`bento-spotlight glass-card rounded-3xl p-8 relative group overflow-hidden cursor-pointer h-full flex flex-col transition-transform duration-300 ease-out ${isLive ? "ring-2 ring-[var(--dyn-accent-blue)]/30 hover:scale-[1.02] hover:-translate-y-2" : "hover:-translate-y-1"}`}
         >
             {/* Glow backdrop */}
             <div
@@ -206,9 +205,9 @@ function ProductCard({ product, index }) {
 
     if (isLive) {
         return (
-            <Link href={product.href} className="block h-full">
+            <a href={product.href} className="block h-full">
                 {CardContent}
-            </Link>
+            </a>
         );
     }
     return CardContent;
@@ -352,11 +351,9 @@ export default function BrandLanding() {
                         transition={{ delay: 0.58, duration: 0.6 }}
                         className="flex flex-col sm:flex-row gap-4 justify-center items-center"
                     >
-                        <motion.a
+                        <a
                             href="#products"
-                            whileHover={{ scale: 1.06, y: -3 }}
-                            whileTap={{ scale: 0.96 }}
-                            className="btn-shimmer relative font-bold text-base py-4 px-10 rounded-full text-white overflow-hidden"
+                            className="btn-shimmer hover:scale-[1.06] hover:-translate-y-1 active:scale-95 duration-300 transition-transform relative font-bold text-base py-4 px-10 rounded-full text-white overflow-hidden"
                             style={{
                                 background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple), var(--dyn-accent-pink))",
                                 backgroundSize: "200% 200%",
@@ -365,12 +362,10 @@ export default function BrandLanding() {
                             }}
                         >
                             Explore Our Tools →
-                        </motion.a>
-                        <motion.a
+                        </a>
+                        <a
                             href="https://textscanner.ai.jotril.com"
-                            whileHover={{ scale: 1.04, y: -2 }}
-                            whileTap={{ scale: 0.97 }}
-                            className="font-bold text-base py-4 px-10 rounded-full border-2 transition-all backdrop-blur-sm"
+                            className="hover:scale-105 active:scale-95 duration-300 transition-transform font-bold text-base py-4 px-10 rounded-full border-2 backdrop-blur-sm"
                             style={{
                                 borderColor: "var(--dyn-silver-dark)",
                                 color: "var(--dyn-text-navy)",
@@ -378,7 +373,7 @@ export default function BrandLanding() {
                             }}
                         >
                             Try Text Scanner Free
-                        </motion.a>
+                        </a>
                     </motion.div>
 
                     {/* Scroll indicator */}
@@ -510,11 +505,9 @@ export default function BrandLanding() {
                             <p className="text-base md:text-lg mb-8 max-w-lg mx-auto" style={{ color: "var(--dyn-ash)" }}>
                                 Try our Text Scanner for free — no sign-up required for basic scans.
                             </p>
-                            <motion.a
+                            <a
                                 href="https://textscanner.ai.jotril.com"
-                                whileHover={{ scale: 1.06, y: -3 }}
-                                whileTap={{ scale: 0.96 }}
-                                className="btn-shimmer inline-flex items-center gap-2 font-bold text-base py-4 px-10 rounded-full text-white"
+                                className="btn-shimmer inline-flex items-center gap-2 hover:scale-[1.06] hover:-translate-y-1 active:scale-95 transition-transform duration-300 font-bold text-base py-4 px-10 rounded-full text-white"
                                 style={{
                                     background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple))",
                                     boxShadow: "0 6px 30px var(--dyn-glow-color)",
@@ -524,7 +517,7 @@ export default function BrandLanding() {
                                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M14 5l7 7m0 0l-7 7m7-7H3" />
                                 </svg>
-                            </motion.a>
+                            </a>
                         </div>
                     </div>
                 </motion.div>

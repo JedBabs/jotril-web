@@ -419,11 +419,9 @@ export default function Home() {
                         transition={{ delay: 0.58, duration: 0.6 }}
                         className="flex flex-col sm:flex-row gap-4 justify-center items-center"
                     >
-                        <motion.a
+                        <a
                             href="#scanner"
-                            whileHover={{ scale: 1.06, y: -3 }}
-                            whileTap={{ scale: 0.96 }}
-                            className="btn-shimmer relative font-bold text-base py-4 px-10 rounded-full text-white overflow-hidden"
+                            className="btn-shimmer hover:scale-[1.06] hover:-translate-y-1 active:scale-95 transition-transform duration-300 relative font-bold text-base py-4 px-10 rounded-full text-white overflow-hidden"
                             style={{
                                 background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple), var(--dyn-accent-pink))",
                                 backgroundSize: "200% 200%",
@@ -432,12 +430,10 @@ export default function Home() {
                             }}
                         >
                             Try It Free →
-                        </motion.a>
-                        <motion.a
+                        </a>
+                        <a
                             href="#how-it-works"
-                            whileHover={{ scale: 1.04, y: -2 }}
-                            whileTap={{ scale: 0.97 }}
-                            className="font-bold text-base py-4 px-10 rounded-full border-2 transition-all backdrop-blur-sm"
+                            className="hover:scale-[1.04] hover:-translate-y-0.5 active:scale-95 transition-transform duration-300 font-bold text-base py-4 px-10 rounded-full border-2 backdrop-blur-sm"
                             style={{
                                 borderColor: "var(--dyn-silver-dark)",
                                 color: "var(--dyn-text-navy)",
@@ -445,7 +441,7 @@ export default function Home() {
                             }}
                         >
                             See How It Works
-                        </motion.a>
+                        </a>
                     </motion.div>
 
                     {/* Scroll indicator */}
@@ -848,18 +844,16 @@ export default function Home() {
                                     </li>
                                 ))}
                             </ul>
-                            <motion.a
+                            <a
                                 href="/auth/signup"
-                                whileHover={{ scale: 1.03 }}
-                                whileTap={{ scale: 0.97 }}
-                                className="mt-8 block text-center font-bold text-sm py-3.5 rounded-full transition-all relative z-10"
+                                className="mt-8 block text-center font-bold text-sm py-3.5 rounded-full transition-transform duration-300 relative z-10 hover:scale-[1.03] active:scale-97"
                                 style={{
                                     background: "var(--dyn-silver)",
                                     color: "var(--dyn-text-navy)",
                                 }}
                             >
                                 Get Started Free
-                            </motion.a>
+                            </a>
                         </motion.div>
 
                         {/* Pro Tier — liquid morphing border */}
