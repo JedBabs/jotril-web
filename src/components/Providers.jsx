@@ -24,7 +24,7 @@ export default function Providers({ children }) {
     return (
         <SessionProvider>
             <ProcessProvider>
-                <ThemeProvider attribute="data-theme" defaultTheme="light" themes={['light', 'dark', 'colorful']}>
+                <ThemeProvider attribute="data-theme" defaultTheme="dark" themes={['light', 'dark', 'colorful']}>
                     {children}
                     <OfflineBanner />
                     <ServiceWorkerRegister />
