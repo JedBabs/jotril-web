@@ -16,6 +16,8 @@
         "@gradio/client": "^2.2.0",
         "@prisma/client": "^5.22.0",
         "@sparticuz/chromium": "^149.0.0",
+        "@vercel/analytics": "^2.0.1",
+        "@vercel/speed-insights": "^2.0.0",
         "bcrypt": "^6.0.0",
         "framer-motion": "^12.38.0",
         "google-auth-library": "^10.7.0",
