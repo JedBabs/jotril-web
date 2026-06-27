@@ -14,12 +14,12 @@ const geistMono = {
 };
 
 export const metadata = {
-    title: "Jotril AI — Detect AI-Generated Text with Precision",
-    description: "Advanced AI content detection engine. Paste your document, essay, or article and get sentence-level analysis showing exactly where AI was used. Powered by the Jotril V2 multi-scale detection model.",
-    keywords: ["AI detector", "AI content checker", "ChatGPT detector", "AI writing detection", "Jotril"],
+    title: "Jotril AI — Multi-Modal AI Detection Platform",
+    description: "Enterprise-grade detection for AI-generated text, images, video, and audio. Detect deepfakes, synthetic voices, and AI writing down to the exact sentence or pixel.",
+    keywords: ["AI detector", "deepfake detector", "AI content checker", "ChatGPT detector", "AI writing detection", "Jotril AI", "image forensics"],
     openGraph: {
-        title: "Jotril AI — Detect AI-Generated Text",
-        description: "Sentence-level AI detection powered by the Jotril V2 engine.",
+        title: "Jotril AI — Full-Spectrum AI Detection",
+        description: "One platform to detect AI-generated content across text, images, video, and audio.",
         type: "website",
     },
 };

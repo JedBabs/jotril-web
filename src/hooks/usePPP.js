@@ -7,16 +7,16 @@ const PPP_TIERS = {
     DEFAULT: { price: 19, currency: "$", label: "" },
 
     // Tier 2 (Approx ~40-50% off)
-    TIER_2: { price: 9, currency: "$", label: "Local Pricing Applied" },
+    TIER_2: { price: 9, currency: "$", label: "" },
 
     // Tier 3 (Africa, parts of LATAM, parts of SEA ~60% off)
-    TIER_3: { price: 7, currency: "$", label: "Local Pricing Applied" },
+    TIER_3: { price: 7, currency: "$", label: "" },
 
     // India (High volume, highly price sensitive ~75% off)
-    INDIA: { price: 5, currency: "$", label: "India Region Pricing Applied" },
+    INDIA: { price: 5, currency: "$", label: "" },
 
     // Nigeria (Highly price sensitive, local currency ~ ₦5,000)
-    NIGERIA: { price: "5,000", currency: "₦", label: "Nigeria Region Pricing Applied" }
+    NIGERIA: { price: "5,000", currency: "₦", label: "" }
 };
 
 const TIER_2_COUNTRIES = ['PL', 'RO', 'HU', 'CZ', 'SK', 'TR', 'ID', 'PH', 'VN', 'TH', 'RS', 'BG', 'HR', 'MY'];

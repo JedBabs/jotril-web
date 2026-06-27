@@ -1,9 +1,73 @@
 {
-    "regions": ["dub1"],
+    "regions": [
+        "dub1"
+    ],
     "crons": [
         {
             "path": "/api/cron/keep-awake",
             "schedule": "0 0 * * *"
+        }
+    ],
+    "rewrites": [
+        {
+            "source": "/api/:path*",
+            "has": [
+                {
+                    "type": "host",
+                    "value": "textscanner.ai.jotril.com"
+                }
+            ],
+            "destination": "/api/:path*"
+        },
+        {
+            "source": "/_next/:path*",
+            "has": [
+                {
+                    "type": "host",
+                    "value": "textscanner.ai.jotril.com"
+                }
+            ],
+            "destination": "/_next/:path*"
+        },
+        {
+            "source": "/api/:path*",
+            "has": [
+                {
+                    "type": "host",
+                    "value": "admin.jotril.com"
+                }
+            ],
+            "destination": "/api/:path*"
+        },
+        {
+            "source": "/_next/:path*",
+            "has": [
+                {
+                    "type": "host",
+                    "value": "admin.jotril.com"
+                }
+            ],
+            "destination": "/_next/:path*"
+        },
+        {
+            "source": "/:path*",
+            "has": [
+                {
+                    "type": "host",
+                    "value": "textscanner.ai.jotril.com"
+                }
+            ],
+            "destination": "/text/:path*"
+        },
+        {
+            "source": "/:path*",
+            "has": [
+                {
+                    "type": "host",
+                    "value": "admin.jotril.com"
+                }
+            ],
+            "destination": "/admin/:path*"
         }
     ]
 }

@@ -5,7 +5,7 @@ import { showToast } from "./Toast";
 
 const DRAFT_KEY = "jotril.scanner.draft";
 
-export default function FileUploader({ onAnalyze, disabled, deviceHash, initialText = "" }) {
+export default function FileUploader({ onAnalyze, disabled, deviceHash, initialText = "", isLoggedIn }) {
     const [isDragging, setIsDragging] = useState(false);
     // Lazy initializer: restore the last unsubmitted draft so a connection
     // drop or accidental refresh doesn't lose what the user was pasting.
@@ -93,6 +93,10 @@ export default function FileUploader({ onAnalyze, disabled, deviceHash, initialT
     };
 
     const processFile = async (file) => {
+        if (!isLoggedIn) {
+            return showToast("Please sign in or sign up first to upload documents. You can still test with text below.", "warning");
+        }
+
         if (file.size > 20 * 1024 * 1024) {
             return showToast("File too large. Maximum file size for your tier may be lower.", "error");
         }
@@ -141,7 +145,7 @@ export default function FileUploader({ onAnalyze, disabled, deviceHash, initialT
                 <motion.div
                     animate={{
                         scale: isDragging ? 1.01 : 1,
-                        borderColor: isDragging ? "var(--dyn-accent-blue)" : "transparent"
+                        borderColor: isDragging ? "var(--dyn-accent-blue)" : "rgba(237, 242, 252, 0)"
                     }}
                     className={`relative w-full h-36 border-2 border-dashed rounded-3xl flex items-center justify-center transition-all cursor-pointer overflow-hidden ${isDragging ? "bg-accent-blue/5" : "bg-[var(--dyn-bg-surface)] hover:bg-[var(--dyn-slate-50)]"
                         }`}
