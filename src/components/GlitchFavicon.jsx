@@ -133,13 +133,21 @@ const frameFns = [
 const NORMAL_FN = frameFns[0];
 const GLITCH_FNS = frameFns.slice(1);
 
+// Persistent favicon link — find or create once, only ever update href.
+// NEVER removeChild — that conflicts with React's DOM reconciler.
+let _faviconLink = null;
 function setFavicon(dataUrl) {
-    document.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"]').forEach(el => el.remove());
-    const link = document.createElement("link");
-    link.rel = "icon";
-    link.type = "image/png";
-    link.href = dataUrl;
-    document.head.appendChild(link);
+    if (!_faviconLink) {
+        _faviconLink = document.querySelector('link[data-glitch-favicon]');
+        if (!_faviconLink) {
+            _faviconLink = document.createElement("link");
+            _faviconLink.rel = "icon";
+            _faviconLink.type = "image/png";
+            _faviconLink.setAttribute("data-glitch-favicon", "true");
+            document.head.appendChild(_faviconLink);
+        }
+    }
+    _faviconLink.href = dataUrl;
 }
 
 export default function GlitchFavicon() {
@@ -152,21 +160,8 @@ export default function GlitchFavicon() {
 
         setFavicon(NORMAL_FN(canvas, ctx));
 
-        const observer = new MutationObserver((mutations) => {
-            for (const mutation of mutations) {
-                for (const node of mutation.addedNodes) {
-                    if (
-                        node.nodeType === 1 &&
-                        node.tagName === "LINK" &&
-                        (node.getAttribute("rel") === "icon" || node.getAttribute("rel") === "shortcut icon") &&
-                        !node.href?.startsWith("data:")
-                    ) {
-                        node.remove();
-                    }
-                }
-            }
-        });
-        observer.observe(document.head, { childList: true });
+        // Removed MutationObserver. Next.js router manages <head> tags, 
+        // aggressively removing them manually creates unrecoverable React crashes.
 
         let timeoutId;
 
@@ -194,7 +189,6 @@ export default function GlitchFavicon() {
 
         return () => {
             clearTimeout(timeoutId);
-            observer.disconnect();
         };
     }, []);
 
