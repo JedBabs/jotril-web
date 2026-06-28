@@ -14,13 +14,45 @@ const geistMono = {
 };
 
 export const metadata = {
-    title: "Jotril AI — Multi-Modal AI Detection Platform",
+    metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://jotril.com"),
+    title: {
+        default: "Jotril AI — Multi-Modal AI Detection Platform",
+        template: "%s | Jotril AI",
+    },
     description: "Enterprise-grade detection for AI-generated text, images, video, and audio. Detect deepfakes, synthetic voices, and AI writing down to the exact sentence or pixel.",
-    keywords: ["AI detector", "deepfake detector", "AI content checker", "ChatGPT detector", "AI writing detection", "Jotril AI", "image forensics"],
+    keywords: ["AI detector", "deepfake detector", "AI content checker", "ChatGPT detector", "AI writing detection", "Jotril AI", "image forensics", "voice cloning detection"],
+    authors: [{ name: "Jotril AI Team" }],
+    creator: "Jotril AI",
+    publisher: "Jotril AI",
+    formatDetection: {
+        email: false,
+        address: false,
+        telephone: false,
+    },
     openGraph: {
         title: "Jotril AI — Full-Spectrum AI Detection",
         description: "One platform to detect AI-generated content across text, images, video, and audio.",
+        url: "/",
+        siteName: "Jotril AI",
+        locale: "en_US",
         type: "website",
+    },
+    twitter: {
+        card: "summary_large_image",
+        title: "Jotril AI — Enterprise Deepfake & AI Detection",
+        description: "Enterprise-grade detection for AI-generated text, images, video, and audio.",
+        creator: "@JotrilAI",
+    },
+    robots: {
+        index: true,
+        follow: true,
+        googleBot: {
+            index: true,
+            follow: true,
+            "max-video-preview": -1,
+            "max-image-preview": "large",
+            "max-snippet": -1,
+        },
     },
 };
 
