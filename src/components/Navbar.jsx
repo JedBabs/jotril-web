@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import ThemeSwitcher from "./ThemeSwitcher";
 import GlitchLogo from "./GlitchLogo";
 import { useSession } from "next-auth/react";
-import Link from "next/link";
 
 const navLinks = [
     { label: "How It Works", href: "#how-it-works" },
@@ -22,10 +21,11 @@ const tierColors = {
 
 function MagneticLink({ href, children, onClick }) {
     const ref = useRef(null);
+    const isClicking = useRef(false);
 
     const handleMouseMove = (e) => {
         const el = ref.current;
-        if (!el) return;
+        if (!el || isClicking.current) return;
         const rect = el.getBoundingClientRect();
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
@@ -35,16 +35,31 @@ function MagneticLink({ href, children, onClick }) {
     };
 
     const handleMouseLeave = () => {
+        isClicking.current = false;
         if (ref.current) ref.current.style.transform = "translate(0,0)";
     };
 
+    const handleMouseDown = () => { isClicking.current = true; };
+    const handleMouseUp = () => { isClicking.current = false; };
+
+    const handleClick = (e) => {
+        if (href.startsWith('#')) {
+            e.preventDefault();
+            const id = href.slice(1);
+            document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+        }
+        onClick?.(e);
+    };
+
     return (
-        <Link
+        <a
             ref={ref}
             href={href}
-            onClick={onClick}
+            onClick={handleClick}
             onMouseMove={handleMouseMove}
             onMouseLeave={handleMouseLeave}
+            onMouseDown={handleMouseDown}
+            onMouseUp={handleMouseUp}
             className="relative text-sm font-semibold transition-colors group py-1 px-1"
             style={{
                 color: "var(--dyn-ash)",
@@ -65,16 +80,17 @@ function MagneticLink({ href, children, onClick }) {
                     background: "linear-gradient(90deg, var(--dyn-accent-blue), var(--dyn-accent-purple))",
                 }}
             />
-        </Link>
+        </a>
     );
 }
 
 function MagneticButton({ href, children, className, style, onClick }) {
     const ref = useRef(null);
+    const isClicking = useRef(false);
 
     const handleMouseMove = (e) => {
         const el = ref.current;
-        if (!el) return;
+        if (!el || isClicking.current) return;
         const rect = el.getBoundingClientRect();
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
@@ -84,21 +100,27 @@ function MagneticButton({ href, children, className, style, onClick }) {
     };
 
     const handleMouseLeave = () => {
+        isClicking.current = false;
         if (ref.current) ref.current.style.transform = "translate(0,0) scale(1)";
     };
 
+    const handleMouseDown = () => { isClicking.current = true; };
+    const handleMouseUp = () => { isClicking.current = false; };
+
     return (
-        <Link
+        <a
             ref={ref}
             href={href}
             onClick={onClick}
             onMouseMove={handleMouseMove}
             onMouseLeave={handleMouseLeave}
+            onMouseDown={handleMouseDown}
+            onMouseUp={handleMouseUp}
             className={`magnetic-btn btn-shimmer ${className}`}
             style={{ transition: "transform 0.25s cubic-bezier(0.34,1.56,0.64,1)", ...style }}
         >
             {children}
-        </Link>
+        </a>
     );
 }
 
@@ -263,10 +285,16 @@ export default function Navbar({ session, onSignOut }) {
                     >
                         <div className="px-6 pb-6 space-y-1 pt-3">
                             {navLinks.map((link) => (
-                                <Link
+                                <a
                                     key={link.href}
                                     href={link.href}
-                                    onClick={() => setMobileOpen(false)}
+                                    onClick={(e) => {
+                                        if (link.href.startsWith('#')) {
+                                            e.preventDefault();
+                                            document.getElementById(link.href.slice(1))?.scrollIntoView({ behavior: 'smooth' });
+                                        }
+                                        setMobileOpen(false);
+                                    }}
                                     className="block py-3 text-sm font-semibold border-b transition-colors"
                                     style={{
                                         color: "var(--dyn-ash)",
@@ -274,7 +302,7 @@ export default function Navbar({ session, onSignOut }) {
                                     }}
                                 >
                                     {link.label}
-                                </Link>
+                                </a>
                             ))}
 
                             <div className="flex justify-center py-4 border-b" style={{ borderColor: "var(--dyn-silver)" }}>
@@ -292,23 +320,21 @@ export default function Navbar({ session, onSignOut }) {
                                         </span>
                                         <span className="text-xs truncate" style={{ color: "var(--dyn-ash)" }}>{userEmail}</span>
                                     </div>
-                                    <Link
+                                    <a
                                         href="/dashboard"
-                                        onClick={() => setMobileOpen(false)}
                                         className="block text-center font-bold text-sm py-3 px-6 rounded-full text-white"
                                         style={{ background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple))" }}
                                     >
                                         Dashboard
-                                    </Link>
+                                    </a>
 
                                     {userRole === 'ADMIN' && (
-                                        <Link
+                                        <a
                                             href="/admin"
-                                            onClick={() => setMobileOpen(false)}
                                             className="block text-center font-bold text-sm py-3 px-6 rounded-2xl bg-navy text-white"
                                         >
                                             Admin Hub
-                                        </Link>
+                                        </a>
                                     )}
                                     <button
                                         onClick={() => { onSignOut?.(); setMobileOpen(false); }}
@@ -320,22 +346,20 @@ export default function Navbar({ session, onSignOut }) {
                                 </div>
                             ) : (
                                 <div className="pt-3 space-y-3">
-                                    <Link
+                                    <a
                                         href="/auth/signin"
-                                        onClick={() => setMobileOpen(false)}
                                         className="block text-center text-sm font-semibold py-2"
                                         style={{ color: "var(--dyn-text-navy)" }}
                                     >
                                         Sign In
-                                    </Link>
-                                    <Link
+                                    </a>
+                                    <a
                                         href="/auth/signup"
-                                        onClick={() => setMobileOpen(false)}
                                         className="block text-center btn-shimmer font-bold text-sm py-3 px-6 rounded-full text-white"
                                         style={{ background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple))" }}
                                     >
                                         Sign Up Free
-                                    </Link>
+                                    </a>
                                 </div>
                             )}
                         </div>

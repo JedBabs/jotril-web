@@ -419,8 +419,11 @@ export default function Home() {
                         transition={{ delay: 0.58, duration: 0.6 }}
                         className="flex flex-col sm:flex-row gap-4 justify-center items-center"
                     >
-                        <a
-                            href="#scanner"
+                        <button
+                            onClick={(e) => {
+                                e.preventDefault();
+                                document.getElementById('scanner')?.scrollIntoView({ behavior: 'smooth' });
+                            }}
                             className="btn-shimmer hover:scale-[1.06] hover:-translate-y-1 active:scale-95 transition-transform duration-300 relative font-bold text-base py-4 px-10 rounded-full text-white overflow-hidden"
                             style={{
                                 background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple), var(--dyn-accent-pink))",
@@ -430,9 +433,12 @@ export default function Home() {
                             }}
                         >
                             Try It Free →
-                        </a>
-                        <a
-                            href="#how-it-works"
+                        </button>
+                        <button
+                            onClick={(e) => {
+                                e.preventDefault();
+                                document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' });
+                            }}
                             className="hover:scale-[1.04] hover:-translate-y-0.5 active:scale-95 transition-transform duration-300 font-bold text-base py-4 px-10 rounded-full border-2 backdrop-blur-sm"
                             style={{
                                 borderColor: "var(--dyn-silver-dark)",
@@ -441,7 +447,7 @@ export default function Home() {
                             }}
                         >
                             See How It Works
-                        </a>
+                        </button>
                     </motion.div>
 
                     {/* Scroll indicator */}
@@ -451,11 +457,17 @@ export default function Home() {
                         transition={{ delay: 1.2, y: { repeat: Infinity, duration: 2.2, ease: "easeInOut" } }}
                         className="pt-8 flex justify-center"
                     >
-                        <a href="#scanner" className="transition-colors" style={{ color: "var(--dyn-ash-light)" }}>
+                        <button
+                            onClick={(e) => {
+                                e.preventDefault();
+                                document.getElementById('scanner')?.scrollIntoView({ behavior: 'smooth' });
+                            }}
+                            className="transition-colors" style={{ color: "var(--dyn-ash-light)" }}
+                        >
                             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
                             </svg>
-                        </a>
+                        </button>
                     </motion.div>
                 </div>
             </section>

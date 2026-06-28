@@ -2,7 +2,6 @@
 
 import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
 import { motion } from 'framer-motion';
 
 function VerifyContent() {
@@ -77,10 +76,10 @@ function VerifyContent() {
                     </div>
                     <h3 className="text-2xl font-black text-navy tracking-tight">Invalid Link</h3>
                     <p className="text-ash text-sm font-medium">{message}</p>
-                    <Link href="/auth/signin"
+                    <a href="/auth/signin"
                         className="block w-full mt-2 py-3.5 px-4 rounded-xl text-sm font-bold border border-silver text-navy hover:bg-black/5 transition-all">
                         Return to Sign In
-                    </Link>
+                    </a>
                 </motion.div>
             )}
         </div>

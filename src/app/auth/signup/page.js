@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { signIn } from 'next-auth/react';
 import { motion } from 'framer-motion';
 
@@ -19,6 +18,7 @@ export default function SignUpPage() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
+    const [successMsg, setSuccessMsg] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
     const handleSubmit = async (e) => {
@@ -41,18 +41,9 @@ export default function SignUpPage() {
                 return;
             }
 
-            const signInRes = await signIn('credentials', {
-                redirect: false,
-                email,
-                password
-            });
-
-            if (signInRes?.error) {
-                setError('Registration successful, but auto-login failed. Please sign in manually.');
-                setIsLoading(false);
-            } else {
-                router.push('/dashboard');
-            }
+            // Successfully registered! Do not auto-login because they need to verify their email first.
+            setSuccessMsg("Registration successful! We've sent a verification link to your email. Please verify your account before signing in.");
+            setIsLoading(false);
 
         } catch (err) {
             setError('Network error occurred. Please try again later.');
@@ -83,7 +74,7 @@ export default function SignUpPage() {
                 </motion.h2>
                 <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.25 }} className="mt-2 text-center text-sm text-ash font-medium">
                     Already have an account?{' '}
-                    <Link href="/auth/signin" className="text-accent-blue font-bold hover:text-accent-blue-light transition-colors">Sign in</Link>
+                    <a href="/auth/signin" className="text-accent-blue font-bold hover:text-accent-blue-light transition-colors">Sign in</a>
                 </motion.p>
             </motion.div>
 
@@ -135,15 +126,22 @@ export default function SignUpPage() {
 
                         {error && (
                             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
-                                className="rounded-xl bg-score-ai/5 p-4 border border-score-ai/20">
-                                <h3 className="text-sm font-semibold text-score-ai text-center">{error}</h3>
+                                className="rounded-xl bg-[#EF4444]/10 p-4 border border-[#EF4444]/20">
+                                <h3 className="text-sm font-semibold text-[#EF4444] text-center">{error}</h3>
+                            </motion.div>
+                        )}
+                        {successMsg && (
+                            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+                                className="rounded-xl bg-[#10B981]/10 p-4 border border-[#10B981]/20">
+                                <h3 className="text-sm font-bold text-[#10B981] text-center mb-2">Check Your Email</h3>
+                                <p className="text-xs text-[#10B981]/90 text-center">{successMsg}</p>
                             </motion.div>
                         )}
 
                         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}>
-                            <motion.button type="submit" disabled={isLoading} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}
+                            <motion.button type="submit" disabled={isLoading || !!successMsg} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}
                                 className="w-full flex justify-center py-3.5 px-4 border border-transparent rounded-xl text-sm font-bold text-white bg-accent-blue hover:bg-accent-blue-light focus:outline-none focus:ring-4 focus:ring-accent-blue/20 transition-all disabled:opacity-50 disabled:shadow-none btn-shimmer shadow-[0_4px_14px_rgba(37,99,235,0.25)]">
-                                {isLoading ? 'Creating account...' : 'Sign up'}
+                                {isLoading ? 'Creating account...' : successMsg ? 'Account Created' : 'Sign up'}
                             </motion.button>
                         </motion.div>
 
@@ -159,7 +157,7 @@ export default function SignUpPage() {
                         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }}>
                             <button
                                 type="button"
-                                onClick={() => signIn('google')}
+                                onClick={() => signIn('google', { callbackUrl: '/dashboard' })}
                                 className="w-full flex justify-center items-center py-3 px-4 rounded-xl border border-silver bg-white text-sm font-bold text-navy hover:bg-black/5 transition-colors shadow-sm"
                             >
                                 <svg className="w-5 h-5 mr-3" viewBox="0 0 24 24" fill="currentColor">

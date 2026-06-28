@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { motion } from 'framer-motion';
 
 export default function ForgotPasswordPage() {
@@ -62,9 +61,9 @@ export default function ForgotPasswordPage() {
                 <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.25 }}
                     className="mt-2 text-center text-sm text-ash font-medium">
                     Remember your password?{' '}
-                    <Link href="/auth/signin" className="font-bold text-accent-blue hover:text-accent-blue-light transition-colors">
+                    <a href="/auth/signin" className="font-bold text-accent-blue hover:text-accent-blue-light transition-colors">
                         Sign in instead
-                    </Link>
+                    </a>
                 </motion.p>
             </motion.div>
 

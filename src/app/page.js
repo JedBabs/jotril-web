@@ -2,7 +2,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, useMotionValue, useSpring } from "framer-motion";
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import Navbar from "@/components/Navbar";
 import { useSession, signOut } from "next-auth/react";
 
@@ -351,8 +350,11 @@ export default function BrandLanding() {
                         transition={{ delay: 0.58, duration: 0.6 }}
                         className="flex flex-col sm:flex-row gap-4 justify-center items-center"
                     >
-                        <a
-                            href="#products"
+                        <button
+                            onClick={(e) => {
+                                e.preventDefault();
+                                document.getElementById('products')?.scrollIntoView({ behavior: 'smooth' });
+                            }}
                             className="btn-shimmer hover:scale-[1.06] hover:-translate-y-1 active:scale-95 duration-300 transition-transform relative font-bold text-base py-4 px-10 rounded-full text-white overflow-hidden"
                             style={{
                                 background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple), var(--dyn-accent-pink))",
@@ -362,7 +364,7 @@ export default function BrandLanding() {
                             }}
                         >
                             Explore Our Tools →
-                        </a>
+                        </button>
                         <a
                             href="https://textscanner.ai.jotril.com"
                             className="hover:scale-105 active:scale-95 duration-300 transition-transform font-bold text-base py-4 px-10 rounded-full border-2 backdrop-blur-sm"
@@ -383,11 +385,17 @@ export default function BrandLanding() {
                         transition={{ delay: 1.2, y: { repeat: Infinity, duration: 2.2, ease: "easeInOut" } }}
                         className="pt-8 flex justify-center"
                     >
-                        <a href="#products" className="transition-colors" style={{ color: "var(--dyn-ash-light)" }}>
+                        <button
+                            onClick={(e) => {
+                                e.preventDefault();
+                                document.getElementById('products')?.scrollIntoView({ behavior: 'smooth' });
+                            }}
+                            className="transition-colors" style={{ color: "var(--dyn-ash-light)" }}
+                        >
                             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
                             </svg>
-                        </a>
+                        </button>
                     </motion.div>
                 </div>
             </section>

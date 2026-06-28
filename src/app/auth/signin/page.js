@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { signIn, useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { motion } from 'framer-motion';
 
 export default function SignInPage() {
@@ -103,9 +102,9 @@ export default function SignInPage() {
                     className="mt-2 text-center text-sm text-ash font-medium"
                 >
                     Or{' '}
-                    <Link href="/auth/signup" className="text-accent-blue font-bold hover:text-accent-blue-light transition-colors">
+                    <a href="/auth/signup" className="text-accent-blue font-bold hover:text-accent-blue-light transition-colors">
                         create your free account
-                    </Link>
+                    </a>
                 </motion.p>
             </motion.div>
 
@@ -167,9 +166,9 @@ export default function SignInPage() {
                                     </div>
 
                                     <div className="text-sm">
-                                        <Link href="/auth/forgot-password" className="font-bold text-accent-blue hover:text-accent-blue-light transition-colors">
+                                        <a href="/auth/forgot-password" className="font-bold text-accent-blue hover:text-accent-blue-light transition-colors">
                                             Forgot password?
-                                        </Link>
+                                        </a>
                                     </div>
                                 </motion.div>
                             </>
@@ -208,8 +207,8 @@ export default function SignInPage() {
                                 whileHover={{ scale: 1.01 }}
                                 whileTap={{ scale: 0.98 }}
                                 className={`w-full flex justify-center py-3.5 px-4 border border-transparent rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 disabled:shadow-none btn-shimmer ${isDevMode
-                                        ? 'bg-score-ai hover:bg-score-ai/90 shadow-[0_4px_14px_rgba(239,68,68,0.25)] focus:ring-4 focus:ring-score-ai/20'
-                                        : 'bg-accent-blue hover:bg-accent-blue-light shadow-[0_4px_14px_rgba(37,99,235,0.25)] focus:ring-4 focus:ring-accent-blue/20'
+                                    ? 'bg-score-ai hover:bg-score-ai/90 shadow-[0_4px_14px_rgba(239,68,68,0.25)] focus:ring-4 focus:ring-score-ai/20'
+                                    : 'bg-accent-blue hover:bg-accent-blue-light shadow-[0_4px_14px_rgba(37,99,235,0.25)] focus:ring-4 focus:ring-accent-blue/20'
                                     }`}
                             >
                                 {isLoading ? 'Signing in...' : isDevMode ? 'Enter Dev Mode' : 'Sign in'}
