@@ -2,6 +2,7 @@ import "./globals.css";
 import Providers from "@/components/Providers";
 import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import AnalyticsTracker from "@/components/AnalyticsTracker";
 import GlitchFavicon from "@/components/GlitchFavicon";
 
 // System Font Fallback to ensure build success without external fetch
@@ -76,6 +77,7 @@ export default function RootLayout({ children }) {
                 <GlitchFavicon />
                 <Analytics />
                 <SpeedInsights />
+                {process.env.NEXT_PUBLIC_GA_ID && <AnalyticsTracker gaId={process.env.NEXT_PUBLIC_GA_ID} />}
             </body>
         </html>
     );
