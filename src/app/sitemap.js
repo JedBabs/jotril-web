@@ -1,5 +1,5 @@
 export default function sitemap() {
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://jotril.com";
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.jotril.com";
 
     // Only include public-facing marketing and utility pages
     return [

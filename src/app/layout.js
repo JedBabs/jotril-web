@@ -14,7 +14,7 @@ const geistMono = {
 };
 
 export const metadata = {
-    metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://jotril.com"),
+    metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://www.jotril.com"),
     title: {
         default: "Jotril AI — Multi-Modal AI Detection Platform",
         template: "%s | Jotril AI",
