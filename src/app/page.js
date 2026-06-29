@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, useMotionValue, useSpring } from "framer-motion";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import Navbar from "@/components/Navbar";
 import { useSession, signOut } from "next-auth/react";
 
@@ -23,7 +24,9 @@ const products = [
             </svg>
         ),
         status: "live",
-        href: "https://textscanner.ai.jotril.com",
+        // Link to the /text route directly (not the textscanner.* subdomain): it's the
+        // same scanner page and works on every environment regardless of subdomain DNS.
+        href: "/text",
         gradient: "from-[var(--dyn-accent-blue)] to-[#06B6D4]",
         glowColor: "rgba(37, 99, 235, 0.3)",
         accentColor: "var(--dyn-accent-blue)",
@@ -204,9 +207,9 @@ function ProductCard({ product, index }) {
 
     if (isLive) {
         return (
-            <a href={product.href} className="block h-full">
+            <Link href={product.href} className="block h-full">
                 {CardContent}
-            </a>
+            </Link>
         );
     }
     return CardContent;
@@ -366,7 +369,7 @@ export default function BrandLanding() {
                             Explore Our Tools →
                         </button>
                         <a
-                            href="https://textscanner.ai.jotril.com"
+                            href="/text"
                             className="hover:scale-105 active:scale-95 duration-300 transition-transform font-bold text-base py-4 px-10 rounded-full border-2 backdrop-blur-sm"
                             style={{
                                 borderColor: "var(--dyn-silver-dark)",
@@ -514,7 +517,7 @@ export default function BrandLanding() {
                                 Try our Text Scanner for free — no sign-up required for basic scans.
                             </p>
                             <a
-                                href="https://textscanner.ai.jotril.com"
+                                href="/text"
                                 className="btn-shimmer inline-flex items-center gap-2 hover:scale-[1.06] hover:-translate-y-1 active:scale-95 transition-transform duration-300 font-bold text-base py-4 px-10 rounded-full text-white"
                                 style={{
                                     background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple))",
@@ -544,7 +547,7 @@ export default function BrandLanding() {
                         © {new Date().getFullYear()} Jotril AI. All rights reserved.
                     </p>
                     <div className="flex gap-6">
-                        <a href="https://textscanner.ai.jotril.com" className="text-sm font-medium transition-colors hover:text-[var(--dyn-accent-blue)]" style={{ color: "var(--dyn-ash)" }}>
+                        <a href="/text" className="text-sm font-medium transition-colors hover:text-[var(--dyn-accent-blue)]" style={{ color: "var(--dyn-ash)" }}>
                             Text Scanner
                         </a>
                     </div>

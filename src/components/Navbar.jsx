@@ -47,7 +47,12 @@ function MagneticLink({ href, children, onClick }) {
         if (href.startsWith('#')) {
             e.preventDefault();
             const id = href.slice(1);
-            document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+            const el = document.getElementById(id);
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+            // The marketing sections (how-it-works/capabilities/pricing/faq) live on the
+            // /text page, not the landing hub. If the anchor isn't on the current page,
+            // navigate to /text so the link never silently does nothing.
+            else window.location.href = `/text${href}`;
         }
         onClick?.(e);
     };
@@ -293,7 +298,9 @@ export default function Navbar({ session, onSignOut }) {
                                     onClick={(e) => {
                                         if (link.href.startsWith('#')) {
                                             e.preventDefault();
-                                            document.getElementById(link.href.slice(1))?.scrollIntoView({ behavior: 'smooth' });
+                                            const el = document.getElementById(link.href.slice(1));
+                                            if (el) el.scrollIntoView({ behavior: 'smooth' });
+                                            else window.location.href = `/text${link.href}`;
                                         }
                                         setMobileOpen(false);
                                     }}
