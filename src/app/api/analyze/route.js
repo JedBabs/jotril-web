@@ -4,6 +4,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '../auth/[...nextauth]/route';
 import { extractTextFromDocument, extractHtmlFromDocument, htmlToProseText } from '@/lib/file-parser';
 import { resolveScan } from '@/lib/budget-governor';
+import { signScanToken, SCAN_TOKEN_COOKIE } from '@/lib/scan-token';
 import {
     hashFingerprint, hashText, estimateCost, checkCache, checkQuota,
     recordQuotaUsage, hashIp, checkIpFloodGate, recordIpRequest,
@@ -77,16 +78,17 @@ export async function POST(req) {
         let charge = null; // { pointCost, purchasedDeficit } when we must record usage
         if (!cached) {
             // Generous per-IP/hour flood breaker — unauthenticated only, so a shared
-            // school network never throttles signed-in users (see quota-manager).
+            // school network never throttles signed-in users (see quota-manager). The
+            // flood breaker and the dual-gate quota check are independent reads, so
+            // run them in one parallel wave instead of two serial Supabase round-trips.
             const ipHash = isAuthed ? null : await hashIp(getClientIp(req));
-            if (!isAuthed) {
-                const flood = await checkIpFloodGate(ipHash);
-                if (!flood.allowed) {
-                    return NextResponse.json({ error: flood.reason }, { status: 429 });
-                }
+            const [flood, quota] = await Promise.all([
+                isAuthed ? Promise.resolve({ allowed: true }) : checkIpFloodGate(ipHash),
+                checkQuota(tier, deviceHash, userId, type, contentSize, sentenceCount),
+            ]);
+            if (!flood.allowed) {
+                return NextResponse.json({ error: flood.reason }, { status: 429 });
             }
-
-            const quota = await checkQuota(tier, deviceHash, userId, type, contentSize, sentenceCount);
             if (!quota.allowed) {
                 return NextResponse.json({ error: quota.reason }, { status: 429 });
             }
@@ -105,7 +107,7 @@ export async function POST(req) {
             if (!isAuthed) await recordIpRequest(charge.ipHash, text.length);
         }
 
-        return NextResponse.json({
+        const response = NextResponse.json({
             // The multi-scale windows the client must query (full text retained — the
             // client derives uniqueTexts = scenarios.map(s => s.text) and the attribution
             // step needs text for the short-window confidence penalty).
@@ -120,6 +122,22 @@ export async function POST(req) {
             monthKey: plan.monthKey,
             callsPerQuery: plan.callsPerQuery,
         });
+
+        // Authorize this client to use /api/gradio-proxy for the windows it's about to
+        // query. HttpOnly so XSS can't read it; SameSite=Strict + same-origin queue calls
+        // means the browser attaches it automatically. Secure only in prod (dev is http
+        // localhost, where a Secure cookie would never be sent). See lib/scan-token.js.
+        const scanToken = await signScanToken();
+        if (scanToken) {
+            response.cookies.set(SCAN_TOKEN_COOKIE, scanToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                path: '/',
+                maxAge: 2 * 60 * 60, // seconds — matches the token TTL
+            });
+        }
+        return response;
 
     } catch (error) {
         console.error("Analysis Pipeline Hard Failure:", error);

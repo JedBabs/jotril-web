@@ -91,9 +91,6 @@ export default function QueueSidebar() {
                                         />
                                     </div>
                                 </div>
-                                {job.tier > 1 && (
-                                    <div className="mt-2 text-[9px] font-bold text-score-human bg-score-human/10 w-fit px-1.5 py-0.5 rounded uppercase tracking-widest">Priority Pro Access</div>
-                                )}
                             </motion.div>
                         );
                     })}

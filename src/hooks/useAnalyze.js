@@ -136,7 +136,7 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
         if (onAfterComplete) onAfterComplete();
     }, [onAfterComplete]);
 
-    const handleAnalyze = useCallback(async (text, file = null, userTier = 1) => {
+    const handleAnalyze = useCallback(async (text, file = null) => {
         if ((!text || text.trim() === "") && !file) {
             showToast("Please enter text or upload a file first.", "warning");
             return;
@@ -220,7 +220,7 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
 
             // Bind Global Queue Lifecycle Execution Event. Results are parallel to
             // uniqueTexts (== scenarios), so scores map straight back by index.
-            jobIdRef.current = QueueManager.enqueueJob(file || { name: 'Pasted Text' }, uniqueTexts.map(t => ({ text: t })), userTier, async (windowResults) => {
+            jobIdRef.current = QueueManager.enqueueJob(file || { name: 'Pasted Text' }, uniqueTexts.map(t => ({ text: t })), async (windowResults, meta) => {
                 // The job completed normally — clear the handle so a later cancel is a no-op.
                 jobIdRef.current = null;
                 if (cancelledRef.current) return; // cancelled mid-scan — discard results
@@ -229,6 +229,10 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
 
                     const scores = windowResults.map(r => (r && typeof r.aiProbability === 'number') ? r.aiProbability : null);
                     const executedQueries = scores.filter(s => s != null).length;
+                    // TRUE proxy round-trips the queue made for this scan (submit + polls +
+                    // retries). Lets the server reconcile the real invocation cost instead of
+                    // assuming submit+poll per window (which undercounts retry-heavy scans).
+                    const actualInvocations = (meta && typeof meta.proxyCalls === 'number') ? meta.proxyCalls : undefined;
 
                     // Run the full attribution engine server-side (needs EngineConfig/Prisma).
                     // retry:true because attribute is pure CPU + a budget reconcile;
@@ -236,7 +240,7 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
                     const attrRes = await resilientFetch("/api/attribute", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ sentences, scenarios, scores, estimate, monthKey, callsPerQuery, executedQueries }),
+                        body: JSON.stringify({ sentences, scenarios, scores, estimate, monthKey, callsPerQuery, executedQueries, actualInvocations }),
                         signal,
                         retry: true,
                         timeoutMs: 30000,

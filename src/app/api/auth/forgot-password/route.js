@@ -26,10 +26,12 @@ export async function POST(req) {
         // Generate token and link
         const token = await createPasswordResetToken(user.id);
 
-        // Construct the reset URL depending on environment
+        // Construct the reset URL from a TRUSTED base, not the client-controlled Host
+        // header (a spoofed Host would poison the reset link). Fall back to Host only if
+        // neither env is set (dev/local).
         const host = req.headers.get('host');
-        const protocol = host.includes('localhost') ? 'http' : 'https';
-        const baseUrl = `${protocol}://${host}`;
+        const fallback = `${host?.includes('localhost') ? 'http' : 'https'}://${host}`;
+        const baseUrl = process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL || fallback;
         await sendPasswordResetEmail(user.email, token, baseUrl);
 
         return NextResponse.json({

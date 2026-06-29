@@ -1,12 +1,47 @@
 export const runtime = 'edge';
 
+import { SCAN_TOKEN_COOKIE, verifyScanToken } from '@/lib/scan-token';
+
+// Exact host allow-list. We parse the URL and check the HOSTNAME — a substring
+// check (`url.includes('.hf.space')`) is exploitable: `https://evil.com/?x=.hf.space`
+// passes it, and the proxy would then send the injected `Authorization: Bearer
+// HF_TOKEN` header to evil.com → token exfiltration. Hostname matching closes that.
+function isAllowedTarget(rawUrl) {
+    let url;
+    try {
+        url = new URL(rawUrl);
+    } catch {
+        return false;
+    }
+    if (url.protocol !== 'https:') return false;
+    const host = url.hostname.toLowerCase();
+    return host === 'huggingface.co' || host.endsWith('.hf.space');
+}
+
 export async function POST(req) {
     try {
+        // Gate: the caller must present a valid scan token (HttpOnly cookie issued by
+        // /api/analyze after the budget governor admitted the scan). Without this the
+        // proxy is an open relay for the server-side HF_TOKEN. verifyScanToken fails
+        // open ONLY when no NEXTAUTH_SECRET is configured (so a misconfig can't brick
+        // every scan); with a secret present (always, in practice) a missing/forged/
+        // expired token is rejected.
+        const token = req.cookies.get(SCAN_TOKEN_COOKIE)?.value;
+        if (!(await verifyScanToken(token))) {
+            return new Response(
+                JSON.stringify({ error: 'Unauthorized: missing or invalid scan token. Start a scan via /api/analyze first.' }),
+                { status: 401, headers: { 'Content-Type': 'application/json' } },
+            );
+        }
+
         const payload = await req.json();
         const { targetUrl, options = {} } = payload;
 
-        if (!targetUrl || (!targetUrl.includes('.hf.space') && !targetUrl.includes('huggingface.co'))) {
-            return new Response(JSON.stringify({ error: "Invalid target URL, blocked by proxy firewall." }), { status: 403 });
+        if (!targetUrl || !isAllowedTarget(targetUrl)) {
+            return new Response(
+                JSON.stringify({ error: 'Invalid target URL, blocked by proxy firewall.' }),
+                { status: 403, headers: { 'Content-Type': 'application/json' } },
+            );
         }
 
         // Initialize headers securely, overriding any client-side Bearer injections

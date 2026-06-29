@@ -298,7 +298,7 @@ export default function BrandLanding() {
                     >
                         <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--dyn-accent-blue)" }} />
                         <span className="text-xs font-bold tracking-widest uppercase" style={{ color: "var(--dyn-accent-blue)" }}>
-                            Multi-Modal AI Detection Platform
+                            AI Text Detection · More Modalities Coming
                         </span>
                     </motion.div>
 
@@ -340,7 +340,7 @@ export default function BrandLanding() {
                         className="text-lg md:text-xl max-w-2xl mx-auto leading-relaxed font-medium"
                         style={{ color: "var(--dyn-ash)" }}
                     >
-                        One platform to detect AI-generated content across text, images, video, and audio. Enterprise-grade precision for the AI era.
+                        Catch AI-generated text down to the exact sentence — with image, video, and audio detection coming soon. Enterprise-grade precision for the AI era.
                     </motion.p>
 
                     {/* CTAs */}
@@ -419,7 +419,7 @@ export default function BrandLanding() {
                             AI Detection for Everything
                         </h2>
                         <p className="mt-4 max-w-xl mx-auto text-base" style={{ color: "var(--dyn-ash)" }}>
-                            From essays to deepfakes — catch what others miss.
+                            From essays to research papers — catch the AI text others miss. Image, video, and audio coming soon.
                         </p>
                     </div>
 
@@ -465,9 +465,9 @@ export default function BrandLanding() {
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                         {[
-                            { icon: "🧠", title: "Multi-Modal", desc: "One platform for text, image, video, and audio detection." },
+                            { icon: "🧠", title: "Text Today, More Soon", desc: "AI text detection now — image, video, and audio on the roadmap." },
                             { icon: "⚡", title: "Enterprise Speed", desc: "Sub-5-second scans with no accuracy compromises." },
-                            { icon: "🔬", title: "Forensic Precision", desc: "Sentence-level, pixel-level, frame-level analysis." },
+                            { icon: "🔬", title: "Forensic Precision", desc: "Sentence-level forensic analysis today; pixel- and frame-level with upcoming modalities." },
                         ].map((item, i) => (
                             <motion.div
                                 key={i}

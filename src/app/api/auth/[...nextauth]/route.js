@@ -8,11 +8,37 @@ import { checkBruteForce, recordFailedLogin, clearBruteForce } from "@/lib/auth-
 
 const prisma = getPrisma();
 
+// Cross-subdomain auth. When COOKIE_DOMAIN is set (e.g. ".jotril.com"), NextAuth's
+// cookies are scoped to the PARENT domain, so a session created on the main app is also
+// recognized on sibling subdomains (admin.jotril.com → /admin via the vercel.json host
+// rewrites). When UNSET we add no `cookies` config at all, so NextAuth uses its built-in
+// host-only defaults — i.e. this is a guaranteed no-op until COOKIE_DOMAIN is configured.
+const cookieDomain = process.env.COOKIE_DOMAIN || undefined;
+const useSecureCookies = process.env.NODE_ENV === 'production';
+const securePrefix = useSecureCookies ? '__Secure-' : '';
+const crossSubdomainCookies = cookieDomain ? {
+    sessionToken: {
+        name: `${securePrefix}next-auth.session-token`,
+        options: { httpOnly: true, sameSite: 'lax', path: '/', secure: useSecureCookies, domain: cookieDomain },
+    },
+    callbackUrl: {
+        name: `${securePrefix}next-auth.callback-url`,
+        options: { httpOnly: true, sameSite: 'lax', path: '/', secure: useSecureCookies, domain: cookieDomain },
+    },
+    csrfToken: {
+        // Drop the default __Host- prefix — it forbids a Domain attribute, so CSRF
+        // couldn't be shared across subdomains otherwise.
+        name: `${securePrefix}next-auth.csrf-token`,
+        options: { httpOnly: true, sameSite: 'lax', path: '/', secure: useSecureCookies, domain: cookieDomain },
+    },
+} : undefined;
+
 export const authOptions = {
     adapter: PrismaAdapter(prisma),
     pages: {
         signIn: '/auth/signin',
     },
+    ...(crossSubdomainCookies ? { cookies: crossSubdomainCookies } : {}),
     providers: [
         GoogleProvider({
             clientId: process.env.GOOGLE_CLIENT_ID,

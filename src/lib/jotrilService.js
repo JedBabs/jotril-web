@@ -131,10 +131,16 @@ export async function pingJotrilModels() {
  * next Space in SPACES so a single dead/cold Space doesn't condemn the chunk. A 429
  * (rate limit) keeps the same Space and just backs off — the others are likely as hot.
  */
-export async function queryJotrilModel(text, spaceName) {
+export async function queryJotrilModel(text, spaceName = SPACES[0], opts = {}) {
     const MAX_RETRIES = 5;
     let retryCount = 0;
-    // Rotate starting from the caller's preferred Space, so retries fan out across the pool.
+    // `onProxyCall` (optional) is invoked once per real proxy round-trip (submit + every
+    // poll + every retry) so the queue can attribute the TRUE invocation count to a job
+    // for an accurate budget reconcile — the old reconcile assumed 1 submit + 1 poll and
+    // silently undercounted retry/poll-heavy scans. No-op for callers that don't pass it.
+    const onProxyCall = typeof opts.onProxyCall === 'function' ? opts.onProxyCall : null;
+    // Default to the first Space so server-side callers (e.g. /api/v1/detect) that pass no
+    // preferred Space don't hit `undefined.replace(...)`. Rotate from here on retries.
     const startIdx = Math.max(0, SPACES.indexOf(spaceName));
     let currentSpace = spaceName;
 
@@ -142,6 +148,7 @@ export async function queryJotrilModel(text, spaceName) {
         try {
             const submitUrl = `https://${currentSpace.replace('/', '-')}.hf.space/gradio_api/call/predict`;
 
+            onProxyCall?.();
             const submitRes = await secureFetch(submitUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -169,6 +176,7 @@ export async function queryJotrilModel(text, spaceName) {
 
             let statusFailures = 0;
             while (statusFailures < 15) {
+                onProxyCall?.();
                 const statusRes = await secureFetch(statusUrl, { method: 'GET' });
 
                 if (!statusRes.ok) {
@@ -317,52 +325,4 @@ export async function predictBatch(texts, onProgress = null, checkCancel = null,
 
     await Promise.all(workers);
     return results;
-}
-
-
-
-export async function queryJotrilBatch(texts, spaceName) {
-    const MAX_RETRIES = 5;
-    let retryCount = 0;
-    while (retryCount <= MAX_RETRIES) {
-        try {
-            const submitUrl = `https://${spaceName.replace("/", "-")}.hf.space/gradio_api/call/batch`;
-            const response = await secureFetch(submitUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ data: [texts] })
-            });
-            
-            const rawResponse = await response.text();
-            if(rawResponse.includes("error")) { console.log(rawResponse); throw new Error("Batch API Error"); } throw new Error("Batch API Error");
-            
-            // Assuming the API returns [ ["ai", 0.9], ["human", 0.1], ... ]
-            // or something similar when batched! We will just parse each result.
-            const eventIdMatch = rawResponse.match(/"event_id":"([^"]+)"/);
-            if (eventIdMatch) {
-               // Wait, the API sends event stream! 
-               const eventId = eventIdMatch[1];
-               const streamResp = await secureFetch(submitUrl + "/" + eventId, { method: "GET" });
-               const streamData = await streamResp.text();
-               if (streamData.includes("event: complete")) {
-                   const splitData = streamData.split("event: complete");
-                   const dataBlock = splitData[splitData.length - 1];
-                   if (dataBlock.includes("data:")) {
-                       const jsonStr = dataBlock.substring(dataBlock.indexOf("data:") + 5).trim();
-                       try {
-                           const resultData = JSON.parse(jsonStr);
-                           return resultData[0]; // Assuming Gradio returns 2D array [[results]]
-                       } catch(err) {
-                           console.log("JSON Parse Error on stream:", jsonStr);
-                       }
-                   }
-               }
-            }
-            throw new Error("Invalid batch parsing context");
-        } catch(e) { console.log(e);
-            retryCount++;
-            await new Promise(r => setTimeout(r, 1000));
-        }
-    }
-    throw new Error("Failed batch");
 }

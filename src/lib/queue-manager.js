@@ -81,8 +81,7 @@ class JotrilQueueManager {
             completed: job.completedChunks,
             // calculateJobETA returns MILLISECONDS — convert to seconds for display
             // (the bug behind "408:40": 24520ms was shown as 24520s = 408m40s).
-            etaSeconds: Math.ceil(this.calculateJobETA(job.id) / 1000),
-            tier: job.tier
+            etaSeconds: Math.ceil(this.calculateJobETA(job.id) / 1000)
         }));
 
         // Reflect the honest proxy-call tally (submit + every poll) for the dev overlay.
@@ -123,8 +122,7 @@ class JotrilQueueManager {
      *
      * @param {File|{name: string}} fileOrMeta - File object or name metadata
      * @param {Array<{text: string}>} chunkDataArray - Sentence chunks to process
-     * @param {number} tier - Priority tier (higher = processed first)
-     * @param {function} onScanComplete - Callback fired with full results array
+     * @param {function} onScanComplete - Callback fired with (results, { proxyCalls })
      * @returns {string} jobId
      */
     /**
@@ -152,7 +150,7 @@ class JotrilQueueManager {
         }
     }
 
-    enqueueJob(fileOrMeta, chunkDataArray, tier, onScanComplete) {
+    enqueueJob(fileOrMeta, chunkDataArray, onScanComplete) {
         const jobId = crypto.randomUUID();
         this._adaptConcurrencyToNetwork();
 
@@ -164,20 +162,22 @@ class JotrilQueueManager {
             results: new Array(chunkDataArray.length).fill(null),
             originalChunks: chunkDataArray,
             retries: new Array(chunkDataArray.length).fill(0), // per-chunk retry counter
-            tier: tier || 1,
+            proxyCalls: 0, // TRUE proxy round-trips (submit+poll+retry) for an accurate budget reconcile
             onScanComplete
         });
 
+        // FIFO enqueue. There is no user-priority tier: the queue is a per-browser
+        // singleton, so every chunk belongs to the same user — there's nobody to
+        // prioritize against. (Sweeper-recovered chunks are front-loaded via unshift;
+        // see _runWorkerLoop.) Real tier differentiation is server-side: the budget
+        // governor maps tier→depth and quota-manager maps tier→limits.
         for (let i = 0; i < chunkDataArray.length; i++) {
             this.queue.push({
                 jobId,
                 chunkIndex: i,
-                chunkData: chunkDataArray[i],
-                tier: tier || 1
+                chunkData: chunkDataArray[i]
             });
         }
-
-        this.queue.sort((a, b) => b.tier - a.tier);
 
         // Spawn workers up to MAX_CONCURRENCY. Stagger their starts: if all 60 fire
         // their query at once they also COMPLETE in lockstep, so the queue empties in
@@ -216,7 +216,13 @@ class JotrilQueueManager {
                 // share on every sweeper pass.
                 const attempt = parentJob.retries[chunkJob.chunkIndex] || 0;
                 const spaceName = SPACES[(chunkJob.chunkIndex + attempt) % SPACES.length];
-                const result = await queryJotrilModel(chunkJob.chunkData.text, spaceName);
+                // Count EVERY proxy round-trip this query makes (submit + each poll + each
+                // internal retry) against the job, so /api/attribute can reconcile the real
+                // invocation cost instead of assuming a flat submit+poll. The closure binds
+                // to THIS job, so concurrent jobs each tally their own (single-threaded JS).
+                const result = await queryJotrilModel(chunkJob.chunkData.text, spaceName, {
+                    onProxyCall: () => { parentJob.proxyCalls++; },
+                });
 
                 if (!result || result.error) throw new Error("Null or errored result from API");
 
@@ -274,19 +280,20 @@ class JotrilQueueManager {
                     const recoverJobs = droppedIndices.map(idx => ({
                         jobId: chunkJob.jobId,
                         chunkIndex: idx,
-                        chunkData: parentJob.originalChunks[idx],
-                        tier: 999 // Absolute Highest Priority Preemption
+                        chunkData: parentJob.originalChunks[idx]
                     }));
 
+                    // Front-load recovered chunks so the worker loop (shift()) preempts them
+                    // ahead of pending work — no tier sort needed now that all jobs are equal.
                     this.queue.unshift(...recoverJobs);
-                    this.queue.sort((a, b) => b.tier - a.tier);
                     this._notify();
                     continue; // Loop organically picks up re-injected chunks
                 }
 
-                // All chunks complete — fire callback
+                // All chunks complete — fire callback with the true proxy-call tally so the
+                // caller can reconcile the real invocation budget (see /api/attribute).
                 if (parentJob.onScanComplete) {
-                    parentJob.onScanComplete(parentJob.results);
+                    parentJob.onScanComplete(parentJob.results, { proxyCalls: parentJob.proxyCalls });
                 }
                 this.activeJobs.delete(chunkJob.jobId);
                 this._notify();

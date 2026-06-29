@@ -28,8 +28,9 @@ const { QueueManager } = await import('../src/lib/queue-manager.js');
 
 test('Queue Manager — Singleton & Constants', async () => {
     assert.ok(QueueManager, 'QueueManager should exist');
-    assert.equal(QueueManager.MAX_CONCURRENCY, 10, 'MAX_CONCURRENCY should be 10');
-    assert.equal(QueueManager.estimatedLatencyMs, 1500, 'Latency estimate should be 1500ms');
+    // MAX_CONCURRENCY = PER_SPACE_CONCURRENCY (30) × SPACES.length (3) = 90.
+    assert.equal(QueueManager.MAX_CONCURRENCY, 90, 'MAX_CONCURRENCY should be 30 × 3 Spaces');
+    assert.equal(QueueManager.estimatedLatencyMs, 1200, 'Latency estimate should be 1200ms');
     assert.ok(QueueManager.telemetry, 'Telemetry object should exist');
     assert.equal(typeof QueueManager.telemetry.edgeProxyCalls, 'number');
     assert.equal(typeof QueueManager.telemetry.sweeperRetries, 'number');
@@ -37,22 +38,25 @@ test('Queue Manager — Singleton & Constants', async () => {
     assert.equal(typeof QueueManager.telemetry.processedChunks, 'number');
 });
 
-test('Queue Manager — VIP Tier Preemption Sorting', async () => {
+test('Queue Manager — FIFO enqueue (no user-priority tier)', async () => {
     // Reset state
     QueueManager.queue = [];
     QueueManager.activeJobs.clear();
     QueueManager.activeWorkers = 999; // Block workers from actually running
 
-    const freeChunks = [{ text: 'free chunk' }];
-    const proChunks = [{ text: 'pro chunk 1' }, { text: 'pro chunk 2' }];
+    const firstChunks = [{ text: 'a1' }];
+    const secondChunks = [{ text: 'b1' }, { text: 'b2' }];
 
-    QueueManager.enqueueJob({ name: 'free.pdf' }, freeChunks, 1, () => { });
-    QueueManager.enqueueJob({ name: 'pro.pdf' }, proChunks, 3, () => { });
+    // enqueueJob signature is now (fileOrMeta, chunkDataArray, onScanComplete) — no tier.
+    const id1 = QueueManager.enqueueJob({ name: 'first.pdf' }, firstChunks, () => { });
+    const id2 = QueueManager.enqueueJob({ name: 'second.pdf' }, secondChunks, () => { });
 
-    // Pro (tier 3) must be sorted before Free (tier 1)
-    assert.equal(QueueManager.queue[0].tier, 3, 'First queued chunk should be tier 3');
-    assert.equal(QueueManager.queue[1].tier, 3, 'Second queued chunk should be tier 3');
-    assert.equal(QueueManager.queue[2].tier, 1, 'Last queued chunk should be tier 1');
+    // All chunks queued in FIFO order; the `tier` field no longer exists.
+    assert.equal(QueueManager.queue.length, 3, 'all 3 chunks queued');
+    assert.equal(QueueManager.queue[0].jobId, id1, 'first job first');
+    assert.equal(QueueManager.queue[1].jobId, id2, 'second job follows');
+    assert.equal(QueueManager.queue[2].jobId, id2, 'second job follows');
+    assert.equal(QueueManager.queue[0].tier, undefined, 'no tier field on queue items');
 
     // Cleanup
     QueueManager.queue = [];
@@ -60,17 +64,17 @@ test('Queue Manager — VIP Tier Preemption Sorting', async () => {
     QueueManager.activeWorkers = 0;
 });
 
-test('Queue Manager — ETA Math (getGlobalQueueDepthMs)', async () => {
-    QueueManager.queue = new Array(20).fill({ tier: 1 }); // 20 fake chunks
-    // Expected: (20 / 10) * 1500 = 3000ms
-    assert.equal(QueueManager.getGlobalQueueDepthMs(), 3000);
+test('Queue Manager — ETA Math (calculateJobETA, no jobId)', async () => {
+    // calculateJobETA(no jobId) = ceil(queue.length * estimatedLatencyMs / max(1, activeWorkers)).
+    QueueManager.activeWorkers = 0; // → workers floor of 1
+    QueueManager.queue = new Array(20).fill({ tier: 1 });
+    assert.equal(QueueManager.calculateJobETA(), 20 * 1200); // 24000ms
 
-    QueueManager.queue = new Array(100).fill({ tier: 1 }); // 100 fake chunks
-    // Expected: (100 / 10) * 1500 = 15000ms
-    assert.equal(QueueManager.getGlobalQueueDepthMs(), 15000);
+    QueueManager.queue = new Array(100).fill({ tier: 1 });
+    assert.equal(QueueManager.calculateJobETA(), 100 * 1200); // 120000ms
 
     QueueManager.queue = [];
-    assert.equal(QueueManager.getGlobalQueueDepthMs(), 0);
+    assert.equal(QueueManager.calculateJobETA(), 0);
 });
 
 test('Queue Manager — Subscribe & Notify', async () => {

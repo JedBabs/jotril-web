@@ -188,12 +188,20 @@ export async function resolveScan({ tier, text, now = new Date() }) {
 }
 
 /**
- * Refund the unused portion of a reservation once the real query count is known.
- * Call from /api/attribute. `actualInvocations` = queries actually executed × callsPerQuery.
+ * Reconcile a reservation against the real invocation cost once the scan is done.
+ * Call from /api/attribute. `actualInvocations` is the queue's honest proxy-call tally
+ * (submit + every poll + every retry) — NOT an estimate.
+ *
+ * Two-directional: if the scan used LESS than reserved (windows deduped, failed early,
+ * cancelled before some windows ran), refund the difference; if it used MORE (retry/
+ * poll-heavy scans routinely exceed a flat submit+poll estimate), reserve the overage so
+ * the monthly budget reflects what was actually spent and can't silently drift under it.
  */
 export async function reconcileScan({ monthKey, estimate, actualInvocations }) {
-    const unused = Math.max(0, (estimate || 0) - (actualInvocations || 0));
-    if (unused > 0) {
-        await refund(getPrisma(), monthKey, unused);
+    const delta = (actualInvocations || 0) - (estimate || 0);
+    if (delta > 0) {
+        await reserve(getPrisma(), monthKey, delta);   // spent more than reserved — charge the rest
+    } else if (delta < 0) {
+        await refund(getPrisma(), monthKey, -delta);   // spent less — give the remainder back
     }
 }

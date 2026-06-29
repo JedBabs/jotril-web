@@ -1,12 +1,19 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
+import { useSession } from "next-auth/react";
 import { showToast } from "./Toast";
 
 const DRAFT_KEY = "jotril.scanner.draft";
 
 export default function FileUploader({ onAnalyze, disabled, deviceHash, initialText = "", isLoggedIn }) {
     const [isDragging, setIsDragging] = useState(false);
+    // Derive the auth state from the session directly so the upload gate can't be
+    // broken by a caller that forgets to pass `isLoggedIn` (the dashboard did — signed-in
+    // users were wrongly told to sign in). An explicit `isLoggedIn` prop still overrides.
+    const { data: session } = useSession();
+    const loggedIn = isLoggedIn !== undefined ? isLoggedIn : !!session?.user;
+    const [showAuthPrompt, setShowAuthPrompt] = useState(false);
     // Lazy initializer: restore the last unsubmitted draft so a connection
     // drop or accidental refresh doesn't lose what the user was pasting.
     // `initialText` (e.g. "retry last scan") always wins if provided.
@@ -44,17 +51,18 @@ export default function FileUploader({ onAnalyze, disabled, deviceHash, initialT
         };
     }, [text]);
 
-    // Debounced cost preview
+    // Debounced cost preview. All state updates happen INSIDE the debounced callback
+    // (never synchronously in the effect body) to avoid cascading renders — a too-short
+    // draft resolves to a cleared preview after the same debounce as a real estimate.
     useEffect(() => {
         if (debounceRef.current) clearTimeout(debounceRef.current);
 
-        const currentWordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
-        if (!text.trim() || currentWordCount < 100) {
-            setCostPreview(null);
-            return;
-        }
-
         debounceRef.current = setTimeout(async () => {
+            const currentWordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
+            if (!text.trim() || currentWordCount < 100) {
+                setCostPreview(null);
+                return;
+            }
             try {
                 const res = await fetch('/api/estimate', {
                     method: 'POST',
@@ -76,6 +84,14 @@ export default function FileUploader({ onAnalyze, disabled, deviceHash, initialT
         };
     }, [text, deviceHash]);
 
+    // Dismiss the auth overlay on Escape.
+    useEffect(() => {
+        if (!showAuthPrompt) return;
+        const onKey = (e) => { if (e.key === "Escape") setShowAuthPrompt(false); };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [showAuthPrompt]);
+
     const handleDrop = async (e) => {
         e.preventDefault();
         setIsDragging(false);
@@ -93,8 +109,9 @@ export default function FileUploader({ onAnalyze, disabled, deviceHash, initialT
     };
 
     const processFile = async (file) => {
-        if (!isLoggedIn) {
-            return showToast("Please sign in or sign up first to upload documents. You can still test with text below.", "warning");
+        if (!loggedIn) {
+            setShowAuthPrompt(true);
+            return;
         }
 
         if (file.size > 20 * 1024 * 1024) {
@@ -135,6 +152,7 @@ export default function FileUploader({ onAnalyze, disabled, deviceHash, initialT
     const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
 
     return (
+        <>
         <div id="scanner" className="w-full relative group/scanner">
             {/* Outer Container Glow */}
             <div className="absolute -inset-1.5 bg-gradient-to-r from-accent-blue/30 via-accent-purple/30 to-accent-pink/30 rounded-[38px] blur-2xl opacity-0 group-hover/scanner:opacity-100 transition-opacity duration-1000 pointer-events-none" />
@@ -152,7 +170,12 @@ export default function FileUploader({ onAnalyze, disabled, deviceHash, initialT
                     onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                     onDragLeave={() => setIsDragging(false)}
                     onDrop={handleDrop}
-                    onClick={() => document.getElementById('hiddenFileInput').click()}
+                    onClick={() => {
+                        // Guests: surface the sign-in overlay instead of opening a file
+                        // picker that would only get rejected at processFile.
+                        if (!loggedIn) { setShowAuthPrompt(true); return; }
+                        document.getElementById('hiddenFileInput').click();
+                    }}
                 >
                     <input type="file" id="hiddenFileInput" className="hidden" accept=".txt,.pdf,.docx" onChange={handleFileSelect} />
 
@@ -261,5 +284,87 @@ export default function FileUploader({ onAnalyze, disabled, deviceHash, initialT
                 </div>
             </div>
         </div>
+
+        {/* Sign-in overlay — shown when a guest tries to upload a document. */}
+        <AnimatePresence>
+            {showAuthPrompt && (
+                <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+                    onClick={() => setShowAuthPrompt(false)}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Sign in to upload documents"
+                >
+                    {/* Backdrop */}
+                    <div className="absolute inset-0 bg-[var(--dyn-text-navy)]/40 backdrop-blur-md" />
+
+                    {/* Card */}
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.94, y: 16 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.96, y: 8 }}
+                        transition={{ type: "spring", stiffness: 320, damping: 26 }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="relative w-full max-w-md glass-card rounded-[28px] p-8 text-center shadow-2xl border border-[var(--dyn-glass-border)] overflow-hidden"
+                    >
+                        {/* Glow */}
+                        <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-56 h-56 rounded-full blur-[90px] opacity-50 pointer-events-none" style={{ background: "var(--dyn-glow-color)" }} />
+
+                        {/* Close */}
+                        <button
+                            type="button"
+                            onClick={() => setShowAuthPrompt(false)}
+                            aria-label="Close"
+                            className="absolute top-4 right-4 p-2 rounded-full text-[var(--dyn-ash)] hover:text-[var(--dyn-text-navy)] hover:bg-[var(--dyn-silver)] transition-colors z-20"
+                        >
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+
+                        {/* Icon */}
+                        <div className="relative z-10 mx-auto mb-5 w-16 h-16 rounded-2xl flex items-center justify-center text-white shadow-lg" style={{ background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple))" }}>
+                            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 11c1.657 0 3-1.343 3-3S13.657 5 12 5 9 6.343 9 8s1.343 3 3 3zm0 0v3m-7 7h14a1 1 0 001-1v-1a6 6 0 00-6-6H10a6 6 0 00-6 6v1a1 1 0 001 1z" /></svg>
+                        </div>
+
+                        {/* Copy */}
+                        <h3 className="relative z-10 text-2xl font-black tracking-tight text-[var(--dyn-text-navy)]">
+                            Sign in to upload documents
+                        </h3>
+                        <p className="relative z-10 mt-2.5 text-[15px] leading-relaxed text-[var(--dyn-ash)]">
+                            Uploading PDF, DOCX, and TXT files needs a free account. You can still try the scanner right now by <span className="font-semibold text-[var(--dyn-text-navy)]">pasting text</span> below — no sign-up required.
+                        </p>
+
+                        {/* CTAs */}
+                        <div className="relative z-10 mt-7 flex flex-col gap-3">
+                            <a
+                                href="/auth/signup"
+                                className="btn-shimmer w-full text-center text-white font-bold text-[15px] py-3.5 rounded-full shadow-[0_8px_24px_rgba(37,99,235,0.25)] hover:shadow-[0_12px_32px_rgba(37,99,235,0.4)] transition-all"
+                                style={{ background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple))" }}
+                            >
+                                Create free account
+                            </a>
+                            <a
+                                href="/auth/signin"
+                                className="w-full text-center font-bold text-[15px] py-3.5 rounded-full border border-[var(--dyn-glass-border)] text-[var(--dyn-text-navy)] hover:bg-[var(--dyn-silver)] transition-colors"
+                            >
+                                Sign in
+                            </a>
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={() => setShowAuthPrompt(false)}
+                            className="relative z-10 mt-4 text-[13px] font-semibold text-[var(--dyn-ash)] hover:text-[var(--dyn-text-navy)] transition-colors"
+                        >
+                            Maybe later — I&apos;ll paste text
+                        </button>
+                    </motion.div>
+                </motion.div>
+            )}
+        </AnimatePresence>
+        </>
     );
 }

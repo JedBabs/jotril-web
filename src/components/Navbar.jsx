@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import ThemeSwitcher from "./ThemeSwitcher";
 import GlitchLogo from "./GlitchLogo";
@@ -208,6 +209,7 @@ export default function Navbar({ session, onSignOut }) {
                                 {userEmail}
                             </span>
 
+                            <MagneticLink href="/">Home</MagneticLink>
                             <MagneticLink href="/dashboard">Dashboard</MagneticLink>
 
                             {userRole === 'ADMIN' && (
@@ -320,6 +322,13 @@ export default function Navbar({ session, onSignOut }) {
                                         </span>
                                         <span className="text-xs truncate" style={{ color: "var(--dyn-ash)" }}>{userEmail}</span>
                                     </div>
+                                    <Link
+                                        href="/"
+                                        className="block text-center text-sm font-semibold py-2"
+                                        style={{ color: "var(--dyn-text-navy)" }}
+                                    >
+                                        Home
+                                    </Link>
                                     <a
                                         href="/dashboard"
                                         className="block text-center font-bold text-sm py-3 px-6 rounded-full text-white"

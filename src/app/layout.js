@@ -17,11 +17,11 @@ const geistMono = {
 export const metadata = {
     metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://www.jotril.com"),
     title: {
-        default: "Jotril AI — Multi-Modal AI Detection Platform",
+        default: "Jotril AI — AI Text Detection (More Modalities Coming)",
         template: "%s | Jotril AI",
     },
-    description: "Enterprise-grade detection for AI-generated text, images, video, and audio. Detect deepfakes, synthetic voices, and AI writing down to the exact sentence or pixel.",
-    keywords: ["AI detector", "deepfake detector", "AI content checker", "ChatGPT detector", "AI writing detection", "Jotril AI", "image forensics", "voice cloning detection"],
+    description: "Enterprise-grade detection for AI-generated text, down to the exact sentence. Image, video, and audio detection coming soon.",
+    keywords: ["AI detector", "AI text detector", "AI content checker", "ChatGPT detector", "AI writing detection", "Jotril AI"],
     authors: [{ name: "Jotril AI Team" }],
     creator: "Jotril AI",
     publisher: "Jotril AI",
@@ -31,8 +31,8 @@ export const metadata = {
         telephone: false,
     },
     openGraph: {
-        title: "Jotril AI — Full-Spectrum AI Detection",
-        description: "One platform to detect AI-generated content across text, images, video, and audio.",
+        title: "Jotril AI — AI Text Detection",
+        description: "Detect AI-generated text down to the exact sentence. Image, video, and audio detection coming soon.",
         url: "/",
         siteName: "Jotril AI",
         locale: "en_US",
@@ -40,8 +40,8 @@ export const metadata = {
     },
     twitter: {
         card: "summary_large_image",
-        title: "Jotril AI — Enterprise Deepfake & AI Detection",
-        description: "Enterprise-grade detection for AI-generated text, images, video, and audio.",
+        title: "Jotril AI — AI Text Detection",
+        description: "Enterprise-grade AI text detection, down to the exact sentence. More modalities coming soon.",
         creator: "@JotrilAI",
     },
     robots: {

@@ -26,6 +26,27 @@ const nextConfig = {
       canvas: './src/lib/empty-module.js',
     },
   },
+
+  // Baseline security headers applied to every response. Deliberately does NOT set a
+  // strict Content-Security-Policy yet — a correct CSP for this app (inline styles,
+  // framer-motion, Vercel/GA analytics, Google Fonts, the same-origin gradio proxy)
+  // needs its own tested pass, and a wrong one silently breaks the page. These headers
+  // are safe and high-value on their own.
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'X-DNS-Prefetch-Control', value: 'on' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), browsing-topics=()' },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

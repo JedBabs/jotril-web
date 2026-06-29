@@ -103,6 +103,10 @@ model QuotaUsage {
   @@index([hash])
   @@index([createdAt])
   @@index([textHash])
+  // Composite indexes matching the dual-gate quota reads (count/aggregate filter on
+  // identity + type + a createdAt window). Realized only after `prisma db push`.
+  @@index([userId, type, createdAt])
+  @@index([hash, type, createdAt])
 }
 
 model EngineConfig {

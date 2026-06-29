@@ -45,7 +45,7 @@ export default async function Image() {
                         fontFamily: 'sans-serif'
                     }}
                 >
-                    Full-Spectrum AI Detection
+                    AI Text Detection
                 </div>
             </div>
         ),

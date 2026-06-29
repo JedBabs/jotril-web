@@ -16,10 +16,11 @@ export async function GET(req) {
         where: { userId: session.user.id }
     });
 
-    // Mask keys: show prefix + last 4 chars only
+    // Keys are stored HASHED — the raw value only ever existed in the creation response.
+    // So we can't show real characters here; render a stable, non-reversible label.
     const maskedKeys = keys.map(k => ({
         ...k,
-        key: k.key.substring(0, 3) + '****...' + k.key.slice(-4)
+        key: 'jt_' + '•'.repeat(8) + '...' + k.key.slice(-4)
     }));
 
     return NextResponse.json({ keys: maskedKeys });
@@ -33,17 +34,21 @@ export async function POST(req) {
 
     const prisma = getPrisma();
 
-    // Server-side securely generates a random strong Key token
+    // Server-side securely generates a random strong Key token. We persist only its
+    // SHA-256 hash — a DB leak then can't reuse keys — and return the raw value ONCE.
     const rawKey = "jt_" + crypto.randomBytes(16).toString('hex');
+    const hashedKey = crypto.createHash('sha256').update(rawKey).digest('hex');
 
     const newKey = await prisma.apiKey.create({
         data: {
-            key: rawKey,
+            key: hashedKey,
             userId: session.user.id,
         }
     });
 
-    return NextResponse.json({ key: newKey });
+    // Hand back the RAW key this one time (override the stored hash in the response);
+    // the user can never retrieve it again.
+    return NextResponse.json({ key: { ...newKey, key: rawKey } });
 }
 
 export async function DELETE(req) {

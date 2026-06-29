@@ -20,7 +20,7 @@ import { reconcileScan } from '@/lib/budget-governor';
 export async function POST(req) {
     try {
         const body = await req.json();
-        const { sentences, scenarios, scores, estimate, monthKey, callsPerQuery, executedQueries } = body;
+        const { sentences, scenarios, scores, estimate, monthKey, callsPerQuery, executedQueries, actualInvocations } = body;
 
         if (!Array.isArray(sentences) || !Array.isArray(scenarios) || !Array.isArray(scores)) {
             return NextResponse.json({ error: "Missing sentences / scenarios / scores arrays" }, { status: 400 });
@@ -55,11 +55,16 @@ export async function POST(req) {
         }
         const chunksWithPara = chunks.map((c, i) => ({ ...c, para: paraOf[i] ?? 0 }));
 
-        // Refund the unused slice of the reservation now that the real query count is known.
+        // Reconcile the reservation against the REAL invocation cost now that the scan is
+        // done. Prefer the queue's honest proxy-call tally (submit + every poll + every
+        // retry); only fall back to the submit+poll estimate for older clients that don't
+        // send it. reconcileScan now also CHARGES an overage (retry-heavy scans can exceed
+        // the reservation), so the budget can't silently drift under sustained failures.
         if (monthKey && estimate) {
-            const executed = typeof executedQueries === 'number' ? executedQueries : scenarios.length;
-            const actualInvocations = executed * (callsPerQuery || 2);
-            await reconcileScan({ monthKey, estimate, actualInvocations });
+            const real = (typeof actualInvocations === 'number' && actualInvocations >= 0)
+                ? actualInvocations
+                : (typeof executedQueries === 'number' ? executedQueries : scenarios.length) * (callsPerQuery || 2);
+            await reconcileScan({ monthKey, estimate, actualInvocations: real });
         }
 
         return NextResponse.json({ chunks: chunksWithPara, breakdown, overallLabel });

@@ -6,7 +6,7 @@
 
 > This file is the single source of truth for all Claude sessions on this project.
 > Update it immediately whenever architecture, bugs, fixes, or intentions change.
-> Last updated: 2026-06-24 (AUTO-TUNER LIFECYCLE FIX: stuck-run deadlock + undefined-metrics-on-deadline, see §15. Added `TuningRun.updatedAt` heartbeat (`prisma db push` — RESTART dev server for the new client); `/run` POST + SSE poller now reclaim a no-heartbeat "active" run after 2 min instead of jamming the dataset; `runExhaustiveSearch` early-deadline returns now include train/test/full metrics via `finalizeResult()`. Also fixed: score-cache poisoning guard (`MAX_NULL_RATE` abort) + force-rebuild path & "Rebuild Cache" UI; `/dev-trigger` shares the run lifecycle (no in-memory lock, keeps COMPLETE history); "best MCC"→"best obj" relabel; `apply` preserves the budget block. Earlier 2026-06-24: HF SPACE LOG CLEANUP: silenced Gradio's Starlette `HTTP_422_UNPROCESSABLE_ENTITY` deprecation warning via a scoped `warnings.filterwarnings` at the top of `app.py` in all three Spaces — committed + pushed (Space-3 was cloned in; it wasn't local). Earlier 2026-06-24: HIGH-FIDELITY DOCX REPORT CACHE + AUTO-PREWARM via Gotenberg + GCS, see §15/§19. New: lib/gotenberg.js, lib/report-storage.js, lib/report/server-overlay.js, /api/report/prewarm, /api/report/download. DOCX scans now prewarm in the background (DOCX→PDF→highlights+cover→GCS) so fresh AND history downloads are instant high-fidelity. Persisted-scan downloads use a real `<a download>` navigation to the new GET endpoint — survives IDM/FDM (which was eating fetch+blob into a fake 204 the day before — see §16). Verified Node-side: Gotenberg IAM, GCS round-trip, server overlay. Prior: user-cancellable processes; load-time fixes; PDF report engine rebuilt on headless Chrome — see §19. Plan: Hobby now → 50-tester private beta → Pro before public launch.
+> Last updated: 2026-06-29. **Security + correctness audit (2026-06-29):** fixed a critical `/api/gradio-proxy` open-relay/SSRF `HF_TOKEN` leak (hostname allow-list + HMAC scan-token cookie), the doubly-broken `/api/v1/detect` public API, the soft budget reconcile (now counts real proxy calls + charges overage), plaintext API keys (now hashed), host-header injection in email links, missing security headers, and per-request middleware logging; parallelized the analyze hot-path gates; added QuotaUsage composite indexes (needs `prisma db push`); deleted dead `queryJotrilBatch`; fixed the 4 stale tests (suite now 17/17). All verified (build/tests/lint/token/SSRF). Full detail in §15 (Fixed 2026-06-29) + §8. **Also 2026-06-29 (polish + fixes):** softened multimodal marketing copy to "AI text detection (more modalities coming)"; deleted the inert queue tier-sort; made the landing page reachable while logged in (removed forced `/`→`/dashboard` redirect, added a navbar "Home" link); cleaned ~51 root scratch files (kept 6 dev tools); fixed the "sign in to upload" bug for signed-in users (`FileUploader` now derives auth from `useSession`) + replaced the toast with a designed sign-in overlay; fixed the `admin.jotril.com` subdomain auth (env-gated `COOKIE_DOMAIN` cross-subdomain session cookie + absolute admin redirect — needs `COOKIE_DOMAIN=.jotril.com` in prod). **Earlier this session (2026-06-28):** documented a previously-undocumented marketing/SEO/analytics/network-resilience layer that landed after the 2026-06-24 doc (new `/text` route, sitemap/robots/OG, GA4 + Vercel Analytics/Speed Insights, `resilient-fetch`, offline pause, ServiceWorker, GlitchFavicon, subdomains) — see new §20 and the refreshed §4 map. Also **corrected the queue tier-priority claim**: the QueueManager tier sort is effectively inert — it's a per-browser singleton (users never compete) AND the UI passes no real tier (FileUploader → useAnalyze defaults `userTier=1`), so every chunk enters at tier 1; only the sweeper's `tier:999` retry preemption ever fires. Real tier differentiation is server-side (governor depth + quota), NOT the queue — see §9. ⚠️ Marketing copy now positions Jotril as multi-modal (text/image/video/audio/deepfake) but the engine is **TEXT-ONLY** — a positioning-vs-capability gap to close before launch. **Prior, 2026-06-24 (AUTO-TUNER LIFECYCLE FIX:** stuck-run deadlock + undefined-metrics-on-deadline, see §15. Added `TuningRun.updatedAt` heartbeat (`prisma db push` — RESTART dev server for the new client); `/run` POST + SSE poller now reclaim a no-heartbeat "active" run after 2 min instead of jamming the dataset; `runExhaustiveSearch` early-deadline returns now include train/test/full metrics via `finalizeResult()`. Also fixed: score-cache poisoning guard (`MAX_NULL_RATE` abort) + force-rebuild path & "Rebuild Cache" UI; `/dev-trigger` shares the run lifecycle (no in-memory lock, keeps COMPLETE history); "best MCC"→"best obj" relabel; `apply` preserves the budget block. Earlier 2026-06-24: HF SPACE LOG CLEANUP: silenced Gradio's Starlette `HTTP_422_UNPROCESSABLE_ENTITY` deprecation warning via a scoped `warnings.filterwarnings` at the top of `app.py` in all three Spaces — committed + pushed (Space-3 was cloned in; it wasn't local). Earlier 2026-06-24: HIGH-FIDELITY DOCX REPORT CACHE + AUTO-PREWARM via Gotenberg + GCS, see §15/§19. New: lib/gotenberg.js, lib/report-storage.js, lib/report/server-overlay.js, /api/report/prewarm, /api/report/download. DOCX scans now prewarm in the background (DOCX→PDF→highlights+cover→GCS) so fresh AND history downloads are instant high-fidelity. Persisted-scan downloads use a real `<a download>` navigation to the new GET endpoint — survives IDM/FDM (which was eating fetch+blob into a fake 204 the day before — see §16). Verified Node-side: Gotenberg IAM, GCS round-trip, server overlay. Prior: user-cancellable processes; load-time fixes; PDF report engine rebuilt on headless Chrome — see §19. Plan: Hobby now → 50-tester private beta → Pro before public launch.
 
 ---
 
@@ -37,6 +37,7 @@ Detection is done at the sentence level — each sentence gets a score 0-100 and
 | DOCX Parse | mammoth | 1.12.0 |
 | Email | Nodemailer | 7.0.13 |
 | Password | bcrypt | 6.0.0 |
+| Analytics | Vercel Analytics + Speed Insights + GA4 (@next/third-parties) | — |
 | Deployment | Vercel (serverless + edge) | — |
 
 ---
@@ -63,6 +64,9 @@ GCP_SA_KEY              (optional) base64-encoded GCP service-account JSON. Used
 GOTENBERG_AUTH          (optional) static Authorization header fallback (only used if GCP_SA_KEY unset; Gotenberg has NO built-in basic auth — only for a self-hosted auth proxy)
 GCS_BUCKET              (optional) GCS bucket caching rendered reports (e.g. jotril-glutenberg-reports-eu, all lowercase). Pair with GCP_SA_KEY. Without it, prewarm is skipped and every download renders fresh.
 NEXT_PUBLIC_REPORT_FIDELITY_ENGINE  (DEPRECATED 2026-06-23) the fidelity path is now server-side (prewarm + GCS cache) and no longer requires a client flag. Safe to leave unset.
+NEXT_PUBLIC_GA_ID       (optional) GA4 measurement id. Unset → AnalyticsTracker not mounted (see §20).
+NEXT_PUBLIC_APP_URL     (optional) canonical base URL for sitemap/robots/metadata. Defaults to https://www.jotril.com.
+COOKIE_DOMAIN           (optional, PROD-ONLY) parent domain (e.g. ".jotril.com") to share the NextAuth session cookie across subdomains so admin.jotril.com (auth-gated → /admin via vercel.json) sees the login. Unset → host-only cookies (default, no-op). ⚠️ Do NOT set on *.vercel.app previews — a ".jotril.com" cookie won't be sent there and login would break.
 ```
 
 ---
@@ -75,6 +79,10 @@ src/
 │   ├── layout.js                    Root layout — wraps everything in <Providers>
 │   ├── page.js                      Landing page (Hero, Scanner, How It Works, Capabilities, Pricing, FAQ)
 │   ├── error.js                     Global error boundary
+│   ├── text/page.js                 Dedicated /text scan landing route (SEO target, priority 0.9; scanner-focused variant of page.js, same useAnalyze/FileUploader)
+│   ├── sitemap.js                   Next metadata route — /, /text, auth pages (baseUrl = NEXT_PUBLIC_APP_URL || https://www.jotril.com)
+│   ├── robots.js                    robots.txt metadata route
+│   ├── opengraph-image.jsx          Dynamic OG image
 │   ├── globals.css                  CSS variables + Tailwind — defines all theme tokens
 │   ├── auth/
 │   │   ├── signin/page.js
@@ -134,11 +142,16 @@ src/
 │   ├── QueueSidebar.jsx             Background job queue display + per-job ✕ cancel — imports QueueManager at top level
 │   ├── DevDebugOverlay.jsx          Dev tools overlay (imports QueueManager) — loaded dynamically + dev-gated via Providers, NOT in the global bundle
 │   ├── InteractiveBackground.jsx    Particle canvas (50 desktop / 25 mobile, responsive)
-│   └── ProcessContext.jsx           Global process-overlay state + cancel registration (openProcess(variant,title,step,onCancel) / cancelProcess)
+│   ├── ProcessContext.jsx           Global process-overlay state + cancel registration (openProcess(variant,title,step,onCancel) / cancelProcess)
+│   ├── AnalyticsTracker.jsx         GA4 pageview tracker (mounted in layout.js only when NEXT_PUBLIC_GA_ID is set)
+│   ├── GlitchFavicon.jsx            Animated favicon (canvas → link rel=icon)
+│   ├── OfflineBanner.jsx            window.online/offline banner; pauses/resumes the QueueManager (see §9 offline pause)
+│   └── ServiceWorkerRegister.jsx    Registers the PWA service worker (offline resilience)
 │
 ├── hooks/
 │   ├── useAnalyze.js                Main analysis orchestrator hook — two-call flow: /api/analyze → queue windows → /api/attribute → persist scan (see §7)
-│   └── usePPP.js                    Purchase Power Parity pricing via geojs.io
+│   ├── usePPP.js                    Purchase Power Parity pricing via geojs.io
+│   └── useOnlineStatus.js           Subscribes to window.online/offline (drives OfflineBanner + queue pause)
 │
 └── lib/
     ├── queue-manager.js             ★ Global singleton queue + auto-sweeper (see §7 and §9)
@@ -160,7 +173,8 @@ src/
     ├── pdf-overlay.js               In-place highlight overlay on original PDFs (pdf-lib) + merged branded cover. WORD-LEVEL resyncing mapper (see §19)
     ├── empty-module.js              Build stub — aliases pdfjs-dist's require("canvas") out of the client bundle
     ├── fingerprint.js               Client-side hardware fingerprinting (15+ signals, 0-100 score)
-    └── exclusion-filter.js          Filters generic/boilerplate sentences from scoring
+    ├── exclusion-filter.js          Filters generic/boilerplate sentences from scoring
+    └── resilient-fetch.js           Client fetch wrapper: timeout + idempotency-aware retry + backoff (getJSON/postJSON). Adopted in useAnalyze/usePPP/download-report/dashboard/QuotaBar; jotrilService.secureFetch still uses raw fetch (own timeout/retry). NOT a global override.
 
 prisma/
 ├── schema.prisma
@@ -287,7 +301,8 @@ fair-use allows ~3 running free CPU Spaces). Add a 4th name here and concurrency
 **`secureFetch(targetUrl, options)`** — wrapper that POSTs to `/api/gradio-proxy` with `{ targetUrl, options }`. Increments `proxyStats.calls` (exported) — the honest per-request tally (submit + every poll) that the queue reflects into `telemetry.edgeProxyCalls`.
 
 **`/api/gradio-proxy/route.js` (Edge Runtime):**
-- Whitelist: only `.hf.space` or `huggingface.co` URLs allowed
+- **Scan-token gate (2026-06-29):** requires a valid `jotril_scan` HttpOnly cookie (HMAC, issued by `/api/analyze` via `lib/scan-token.js`) — without it the proxy was an open relay for `HF_TOKEN`. Fails open only if `NEXTAUTH_SECRET` is unset.
+- **Host allow-list (2026-06-29):** `isAllowedTarget()` parses the URL and matches the **hostname** (`=== 'huggingface.co' || endsWith('.hf.space')`) + requires `https:`. The old `url.includes('.hf.space')` substring check was an SSRF token-exfil hole (`evil.com/?x=.hf.space` passed).
 - Injects `Authorization: Bearer ${HF_TOKEN}` server-side
 - Passes `options` directly to `fetch(targetUrl, options)` — body must be a pre-stringified string
 
@@ -304,6 +319,8 @@ fair-use allows ~3 running free CPU Spaces). Add a 4th name here and concurrency
 ## 9. Queue Manager Deep Dive (`src/lib/queue-manager.js`)
 
 **Singleton** — `new JotrilQueueManager()` always returns the same instance via `JotrilQueueManager.instance`.
+
+**Tier field REMOVED (2026-06-29).** The queue used to carry a per-chunk `tier` and re-sort `(a,b) => b.tier - a.tier`, but it was inert: a **per-browser singleton** (every chunk belongs to one user → nobody to prioritize against) AND the UI never passed a real tier (defaulted to 1). It's now deleted — `enqueueJob(fileOrMeta, chunkDataArray, onScanComplete)` (no tier param), FIFO push, no sort. Sweeper-recovered chunks are still preempted via `queue.unshift(...)` (front-loaded, no sort needed). **Real tier differentiation lives server-side, before the queue:** the budget governor maps tier→depth (how many windows get queued, §14/§15) and quota-manager maps tier→limits (§10).
 
 **Key state:**
 ```js
@@ -361,6 +378,8 @@ telemetry: {
 - **Space pick is failover-aware:** `SPACES[(chunkIndex + retries[idx]) % SPACES.length]` — a sweeper-reinjected chunk starts on a *different* Space than the one that failed it. Combined with `queryJotrilModel`'s per-retry rotation, one dead Space costs ~1 extra request/chunk instead of degrading ⅓ of the scan (see §8).
 
 **Cancellation (`cancelJob(jobId)`):** sets `job.cancelled = true` **before** deleting the job from `activeJobs` and filtering the queue. Queued chunks of the job are skipped via the existing `if (!parentJob) continue` guard; a worker already awaiting an in-flight query holds a live reference to the job object, so `_runWorkerLoop` re-checks `parentJob.cancelled` before the finish/sweeper block and before firing `onScanComplete` — without the flag a cancelled job could still write results and fire its callback. Callers: `useAnalyze.cancelAnalysis` (foreground/overlay) and the per-job ✕ in `QueueSidebar` (background). See §15 (2026-06-22).
+
+**Offline pause/resume (2026-06-28):** `pause()`/`resume()` suspend NEW chunk pickup without cancelling in-flight queries — workers `await _waitWhilePaused()` between chunks and wake when `resume()` flushes the waiter set (`_pauseWaiters`). Driven by `OfflineBanner`/`useOnlineStatus` on `window.offline`/`online` so a network drop stops hammering the proxy/Spaces instead of burning retries. No-op when nothing is queued. Concurrency is also network-adaptive: `_adaptConcurrencyToNetwork()` reads `navigator.connection.effectiveType` and lowers `MAX_CONCURRENCY` on 2g/3g (full pool on 4g/wifi/unknown). **Stale code comments:** `queue-manager.js` line ~19 still says `30 × 2 = 60` (it's 30 × SPACES.length = 90 with 3 Spaces) and line ~26 references the debunked "Vercel 100K daily limit" (it's 1M/month — see §14). Doc values are authoritative.
 
 **Important — `QueueSidebar` imports `QueueManager` at the TOP LEVEL** (not dynamically). Any syntax or parse error in `queue-manager.js` crashes the ENTIRE client bundle including `layout.js`, taking down all pages. (`DevDebugOverlay` *used* to as well, but as of 2026-06-22 it's `dynamic(..., {ssr:false})` + dev-gated in `Providers`, so it's no longer in the global bundle — a parse error there now only surfaces for dev users when the lazy chunk loads. `ScanGuard` lazy-imports `queue-manager` inside an effect.)
 
@@ -465,6 +484,28 @@ Design language: glassmorphism (`backdrop-filter: blur(24px)`), gradient buttons
 
 ## 15. Known Issues & History
 
+### Fixed 2026-06-29 (security + correctness audit pass — all verified: build exit 0, tests 17/17, lint clean, scan-token 12/12, SSRF allowlist 11/11)
+- **🚩🚩 `/api/gradio-proxy` was an unauthenticated open relay that leaked `HF_TOKEN` (critical).** Two compounding holes: (1) the target allow-list was a substring check — `targetUrl.includes('.hf.space')` — so `https://evil.com/?x=.hf.space` passed and the proxy then sent the injected `Authorization: Bearer HF_TOKEN` to the attacker (token exfiltration); (2) no auth at all, so anyone could drive the server's HF token (cost/abuse) and bypass the budget governor entirely. **Fix:** (a) `isAllowedTarget()` now parses the URL and matches the **hostname** (`=== 'huggingface.co' || endsWith('.hf.space')`) and requires `https:` — verified against 11 vectors incl. substring/suffix/non-https; (b) the proxy now requires a valid **scan token** (HttpOnly, SameSite=Strict cookie `jotril_scan`) issued by `/api/analyze` after the governor admits the scan. New `src/lib/scan-token.js` (Web-Crypto HMAC of `{exp}` with `NEXTAUTH_SECRET`; runs in BOTH node + edge). `/api/analyze` sets the cookie on its success response; the edge proxy verifies it. **Fails OPEN only if no `NEXTAUTH_SECRET`** (so a misconfig can't brick scans; in practice it's always set). Works for guests + authed (cookie auto-sent, same-origin). **Chosen over threading a token through the queue** — the cookie has far lower blast radius (no `queue-manager`/`jotrilService` plumbing). Residual: the token is a "came through the front door" gate, not a per-call cap — an HttpOnly cookie is replayable within its 2h TTL but not XSS-readable; the authoritative invocation budget still lives in `UsageBudget`.
+- **🚩 The public REST API `/api/v1/detect` was doubly broken (returned garbage).** It read `result.aiScore`/`result.humanScore`/`result.label`, but `queryJotrilModel` returns `{ score, aiProbability, confidence, rawLabel }` → `ai_probability`/`human_probability` were `NaN`→`null` and `label` `undefined`. Worse, it called `queryJotrilModel(text)` with **no Space**, so `currentSpace.replace(...)` threw before any result (→ 500). **Fix:** `queryJotrilModel` now defaults `spaceName = SPACES[0]`; the route maps `ai_probability = round(result.score)`, `human_probability = 100 - that`, and bands `label` with the engine's default thresholds (human ≤62 / mixed 63-75 / ai ≥76). Added a null-score 502 guard BEFORE charging quota (no charge for a failed scan).
+- **🚩 Budget reservation undercounted real invocations (governor was "soft").** Reserve = `uniqueWindows × callsPerQuery` (2), but a query is 1 submit + up to 15 polls + up to 5 Space retries + 3 sweeper retries; `reconcileScan` only ever **refunded**, so retry/poll-heavy scans (exactly when Spaces are flaky) silently overshot the cap. **Fix:** the queue now tallies the TRUE per-job proxy-call count (`queryJotrilModel` calls an `onProxyCall` hook on every submit/poll/retry; the worker accumulates `parentJob.proxyCalls`, concurrency-safe via per-job closures), passes it through `onScanComplete(results, {proxyCalls})` → `useAnalyze` → `/api/attribute` as `actualInvocations`. `reconcileScan` is now **two-directional** — refunds when under, **reserves the overage when over** — so the monthly budget reflects reality. Falls back to the old estimate for older clients. Residual: `reconcile`/`reserve` aren't strictly idempotent under client retries (pre-existing class; drift bounded and biased safe).
+- **API keys were stored in plaintext.** A DB read exposed every usable key. **Fix:** `/api/keys` POST now persists `sha256(rawKey)` and returns the raw key ONCE; `/api/v1/detect` looks up by hash with a plaintext fallback so legacy keys still work until rotated. GET masking updated (can't show real chars of a hashed key). No schema change; no migration run (beta has ~no real API consumers; the API was broken anyway).
+- **Host-header injection in email links.** `register` + `forgot-password` built verification/reset URLs from the client-controlled `Host` header (spoofable → poisoned links). **Fix:** prefer `NEXTAUTH_URL` / `NEXT_PUBLIC_APP_URL`, fall back to Host only when neither is set (dev).
+- **No security headers.** Added a `headers()` block in `next.config.mjs`: HSTS, `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, `Permissions-Policy`. **Deliberately NOT a strict CSP** — a correct CSP (inline styles, framer-motion, Vercel/GA analytics, Google Fonts, same-origin proxy) needs its own tested pass; a wrong one silently breaks the page. Follow-up.
+- **Middleware logged token role/keys on every request.** Removed the per-request `console.log`s (noise + minor info disclosure + hot-path cost).
+- **`/api/analyze` hot path:** the IP flood breaker and dual-gate quota check (independent reads) now run in one `Promise.all` wave instead of two serial Supabase round-trips.
+- **Composite indexes** added to `QuotaUsage` (`[userId, type, createdAt]`, `[hash, type, createdAt]`) matching the dual-gate reads. ⚠️ **Schema only — needs `prisma db push` (NOT run) to take effect.**
+- **Dead code removed:** `queryJotrilBatch` (unconditional `throw`, zero importers) deleted.
+- **Stale tests fixed:** the 4 pre-existing failures (asserted `SPACES.length===2`, `MAX_CONCURRENCY===10`, `estimatedLatencyMs===1500`, removed `getGlobalQueueDepthMs`) updated to current reality → suite green 17/17.
+- **Still open (not code):** strict CSP (above); `prisma db push` for the new indexes; rotate the `.git/config` HF token.
+
+### Polish 2026-06-29 (product/UX/cleanup — verified: build exit 0, tests 17/17, lint clean)
+- **Multimodal copy softened to "AI text detection (more modalities coming)"** — `layout.js` metadata, `page.js` hero + feature cards, `opengraph-image.jsx`. The Image/Video/Audio cards were already honest (`status:"coming"`). See §20.
+- **Inert queue tier-sort deleted** — `enqueueJob` lost its `tier` param; FIFO push, no sort; sweeper preemption via `unshift`. Updated `useAnalyze` (dropped `userTier`), `QueueSidebar` (removed dead "Priority Pro Access" badge), and the queue test. See §9.
+- **Landing page reachable when logged in.** Removed the middleware `/`→`/dashboard` forced redirect (middleware no longer matches `/`); first-login still routes to `/dashboard` via the sign-in flow's `router.push`. Added a **"Home"** link to the authenticated navbar (desktop `MagneticLink`, mobile `next/link`).
+- **🚩 Signed-in users were told to "sign in to upload."** `FileUploader`'s upload gate read an `isLoggedIn` **prop** that the dashboard never passed (`undefined` → falsy). Now it derives auth from `useSession()` directly (prop still overrides), so a caller can't break it. Also replaced the warning toast with a **designed sign-in overlay** (glass card + gradient CTAs, Framer Motion, click-outside / Esc / X to dismiss, `role="dialog"`) prompting guests to sign up / sign in — guests can still paste text. Dropzone click short-circuits to the overlay for guests. Plus a pre-existing lint nit cleanup (`set-state-in-effect` in the cost-preview effect → state writes moved into the debounced callback).
+- **Root scratch pile cleaned** (~51 one-off debug/patch/tmp files deleted; 6 genuine dev tools kept). See §15 "Scratch Files in Root".
+- **Admin subdomain (`admin.jotril.com`) couldn't authenticate.** `vercel.json` rewrites the host's `/*` → `/admin/*`, but `/admin` is auth-gated (`admin/layout.js` → `getServerSession`) while NextAuth set a **host-only** session cookie — so a login on the main domain wasn't visible on `admin.jotril.com` → layout redirected every time, and the relative `redirect('/dashboard')` got rewritten to `/admin/dashboard` (404). (The `textscanner.*` subdomain was fine because `/text` is public.) **Fix:** (a) env-gated cross-subdomain cookies in `[...nextauth]` — set `COOKIE_DOMAIN=.jotril.com` (prod only) to scope the session/csrf/callback cookies to the parent domain; unset = host-only default (no-op). (b) `admin/layout.js` unauthorized redirect is now absolute (`NEXT_PUBLIC_APP_URL`) so it lands on the main app instead of a rewritten 404. **Requires:** `admin.jotril.com` added as a domain in the Vercel project, `COOKIE_DOMAIN` set in Production, redeploy (existing sessions re-log-in once).
+
 ### Fixed 2026-06-24
 - **🚩 Auto-tuner runs could permanently jam a dataset (stuck-run deadlock) + time-limited runs reported `undefined` metrics.** Two lifecycle bugs in the admin auto-tuner (`/api/admin/auto-tune/[id]/run`):
   - **Stuck-run deadlock (A).** The tuning work runs in an in-process `after()` task. In local dev any dev-server restart / Turbopack Fast Refresh / crash kills it mid-run **without** writing a terminal status, leaving the row stuck at `CACHING`/`TUNING` forever. The POST handler's `activeRun` guard then returned "Continuing active run" indefinitely (dataset permanently un-runnable), the startup `deleteMany` only swept `FAILED`/`CANCELLED` (never stale-active), and the SSE poller streamed frozen progress forever. **Fix:** added a `updatedAt @updatedAt` heartbeat to `TuningRun` (every throttled progress write bumps it). POST now reclaims an "active" run with no heartbeat for `STALE_RUN_MS` (2 min) — flips it to `FAILED` and starts fresh instead of blocking. The SSE GET poller does the same so a jammed run surfaces as FAILED → the client closes + refreshes. Applied via `prisma db push` (gave `updatedAt` a `@default(now())` so the 3 existing rows backfilled — required column otherwise blocked the push). ⚠️ **A running dev server must be restarted** to pick up the regenerated Prisma client (the push's auto-generate showed the known harmless `EPERM ... query_engine-windows.dll.node` rename — client still regenerated). Residual: a genuinely-wedged-but-alive worker (>2 min with no heartbeat, vs heartbeats every ~2.5s → 48× margin) could be reclaimed and later resurrect its own FAILED row; accepted as unlikely.
@@ -560,8 +601,8 @@ Design language: glassmorphism (`backdrop-filter: blur(24px)`), gradient buttons
 - **HF Space cold-start** — 30-60s GPU init on first request after inactivity. `ColdStartOverlay` handles UX. Keep-awake cron mitigates but doesn't eliminate.
 - **Vercel timeout risk** — any server-side code that awaits the full HF inference chain synchronously will hit the 10s/60s limit. All inference must go through the client-side queue + Edge proxy path.
 
-### Scratch Files in Root (untracked, from debugging sessions)
-`find_bug.js`, `fix_import.js`, `fix_turbopack.js`, `implement_retry.js`, `patchErr.js`, `patchErr2.js`, `patchHeaders.js`, `patchRgx.js`, `patchRgx2.js`, `patch_route.js`, `patch_route2.js`, `patch_spaces.js`, `revert_batch.js`, `rewrite_qm.js` — safe to delete if cleanup is needed.
+### Scratch Files in Root — CLEANED 2026-06-29
+The root debug-script pile (~51 files: `patch*`, `fix_*`, `find_*`, `check[2-4].js`, `tmp_*`, `revert_batch`, `rewrite_qm`, `_monitor.cjs`, old `tests/tmp_*_read.js`, `build_log.txt`, etc.) was deleted. **Kept** (genuine local dev tools, all read from `process.env`, no hardcoded secrets): `run-tuner.cjs` (standalone auto-tuner), `test-grid.mjs` (standalone grid search), `query-db.js` + `check-roles.js` (DB inspectors), `test_hf_token.mjs` + `test-hf.js` (HF connectivity; `test-hf.js` has a stale 2-Space list). These aren't imported by the app or the test runner (`tests/*.test.mjs`).
 
 ---
 
@@ -689,3 +730,27 @@ Fired in `useAnalyze.processFinalResults` AFTER `POST /api/scan-results` resolve
 - Bucket name must be **all lowercase** (`jotril-glutenberg-reports-eu`). GCS rejects mixed case.
 - If the headless render fails in prod, verify the chromium binary was traced (size limit) — consider `@sparticuz/chromium-min` + remote brotli pack.
 - Data shape: `chunks=[{text,label('human'|'mixed'|'ai'),score,para}]`, `breakdown={human,mixed,ai}` (string %), `overallLabel`, `sourceHtml` (DOCX only).
+
+---
+
+## 20. Marketing / SEO / Analytics / Resilience Layer (landed 2026-06-25→28, documented 2026-06-28)
+
+A non-detection surface landed *after* the 2026-06-24 doc and was previously undocumented (commits: "added vercel analytics and speed insight", "fixed glitchy fav icon", "added sub domains", "dark mode default", "G search", "GA4"). **None of it touches the detection pipeline.**
+
+**Routes & SEO**
+- `src/app/text/page.js` — dedicated **/text scan landing route**, a scanner-focused variant of `page.js` (same `useAnalyze`/`FileUploader`); primary SEO target (sitemap priority 0.9).
+- `src/app/sitemap.js`, `src/app/robots.js` — Next metadata routes (`baseUrl = NEXT_PUBLIC_APP_URL || https://www.jotril.com`).
+- `src/app/opengraph-image.jsx` — dynamic OG image.
+- `src/app/layout.js` — enriched `metadata` (title template, keywords, OG/Twitter cards, robots) + `GlitchFavicon`, `<Analytics/>`, `<SpeedInsights/>`, and conditional `<AnalyticsTracker/>`.
+- **Positioning-vs-capability gap — SOFTENED 2026-06-29.** Copy used to advertise full-spectrum "text, image, video, audio / deepfake" detection while the engine is **TEXT-ONLY** (claims risk). Reworded to "AI text detection (more modalities coming)": `layout.js` metadata (title/description/keywords/OG/Twitter), `page.js` hero badge + subheading + the two "why" feature cards, and `opengraph-image.jsx` ("AI Text Detection"). The Image/Video/Audio product cards were already honest (`status:"coming"` → "Coming Soon" badge + "Notify Me") and were left as-is.
+
+**Analytics** (all client, no-op without env)
+- `components/AnalyticsTracker.jsx` — GA4, mounted in `layout.js` only when `NEXT_PUBLIC_GA_ID` is set.
+- `@vercel/analytics` + `@vercel/speed-insights` always mounted in `layout.js`.
+
+**Network resilience / offline**
+- `lib/resilient-fetch.js` — fetch wrapper: AbortController timeout (20s) composed with the caller's signal, retry on network errors + 408/425/429/5xx (honors `Retry-After`), exp backoff + jitter, **idempotency-aware** (GET/HEAD retry; POST only with `{retry:true}`). `getJSON`/`postJSON` helpers. **Adopted** in `useAnalyze`, `usePPP`, `download-report`, `dashboard/page`, `QuotaBar`; **NOT** in `jotrilService.secureFetch` (the proxy hot path keeps its own AbortController timeout + retry in `queryJotrilModel`). Not a global override.
+- `hooks/useOnlineStatus.js` + `components/OfflineBanner.jsx` — banner on `window.offline`; **pauses the QueueManager** (resume on `online`) — see §9 offline pause.
+- `components/ServiceWorkerRegister.jsx` — registers the PWA service worker.
+
+**Env (new):** `NEXT_PUBLIC_GA_ID` (GA4 measurement id; unset → tracker not mounted), `NEXT_PUBLIC_APP_URL` (canonical base for sitemap/robots/metadata; defaults to `https://www.jotril.com`).
