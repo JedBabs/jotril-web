@@ -21,18 +21,53 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
     const abortRef = useRef(null);
     const jobIdRef = useRef(null);
     const cancelledRef = useRef(false);
+    // Holds { estimate, monthKey } for the budget the server reserved in /api/analyze.
+    // The reservation is released exactly once: by /api/attribute on success (we then
+    // null this), or by reconcileBudget() on any abandonment path. Prevents the reserve
+    // from leaking into UsageBudget.used when a scan never reaches /api/attribute.
+    const budgetRef = useRef(null);
+
+    /**
+     * One-shot release of the up-front budget reservation when a scan is abandoned
+     * (cancel / attribution failure). Best-effort + idempotent: the first caller wins
+     * (we null budgetRef immediately), so multiple abort paths can't double-refund, and
+     * it no-ops once the success path has cleared the reservation. keepalive lets it
+     * survive a navigation/unmount.
+     */
+    const reconcileBudget = useCallback((actualInvocations = 0) => {
+        const b = budgetRef.current;
+        if (!b || !b.monthKey || typeof b.estimate !== 'number') return;
+        budgetRef.current = null;
+        try {
+            fetch('/api/budget/reconcile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ monthKey: b.monthKey, estimate: b.estimate, actualInvocations }),
+                keepalive: true,
+            }).catch(() => { /* best-effort — the server pool is authoritative */ });
+        } catch { /* ignore */ }
+    }, []);
 
     const cancelAnalysis = useCallback(() => {
         cancelledRef.current = true;
         try { abortRef.current?.abort(); } catch { /* already settled */ }
-        if (jobIdRef.current) {
+        const jobId = jobIdRef.current;
+        jobIdRef.current = null;
+        if (jobId) {
             import('@/lib/queue-manager')
-                .then(({ QueueManager }) => QueueManager.cancelJob(jobIdRef.current))
-                .catch(() => { /* module load race — nothing to cancel */ });
-            jobIdRef.current = null;
+                .then(({ QueueManager }) => {
+                    // cancelJob returns the proxy calls already spent — refund the rest.
+                    const spent = QueueManager.cancelJob(jobId);
+                    reconcileBudget(typeof spent === 'number' ? spent : 0);
+                })
+                .catch(() => reconcileBudget(0)); // module load race — nothing ran
+        } else {
+            // Cancelled before the queue started (during /api/analyze, or right after) —
+            // nothing has been spent, so refund the whole reservation.
+            reconcileBudget(0);
         }
         showToast("Analysis cancelled.", "info");
-    }, []);
+    }, [reconcileBudget]);
 
     const [results, setResults] = useState(null);
     const [breakdown, setBreakdown] = useState(null);
@@ -193,6 +228,12 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
             const data = await res.json();
             const { scenarios, sentences, sourceHtml: html, chunkCount, depth, estimate, monthKey, callsPerQuery } = data;
 
+            // Record the reservation the server just made so it can be released if this
+            // scan is abandoned before /api/attribute reconciles it.
+            if (monthKey && typeof estimate === 'number') {
+                budgetRef.current = { estimate, monthKey };
+            }
+
             // The full engine queries multi-scale WINDOWS (scenarios), not raw sentences.
             // uniqueTexts are already deduped server-side (scenarios carry unique texts).
             const uniqueTexts = scenarios.map(s => s.text);
@@ -235,8 +276,12 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
                     const actualInvocations = (meta && typeof meta.proxyCalls === 'number') ? meta.proxyCalls : undefined;
 
                     // Run the full attribution engine server-side (needs EngineConfig/Prisma).
-                    // retry:true because attribute is pure CPU + a budget reconcile;
-                    // a duplicated reconcile just refunds twice harmlessly.
+                    // retry:true so a transient blip after the (expensive) HF scan still lands
+                    // the results. Caveat: the budget reconcile inside /api/attribute is a
+                    // non-idempotent counter adjustment, so a retry that re-runs after a
+                    // lost-but-successful response re-applies a small delta — bounded, rare,
+                    // and safe-biased (the authoritative pool is server-side in UsageBudget).
+                    // A fully idempotent reconcile would need a per-scan ledger.
                     const attrRes = await resilientFetch("/api/attribute", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -254,14 +299,20 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
                     }
 
                     const { chunks } = await attrRes.json();
+                    // /api/attribute reconciled the reservation server-side — clear it so
+                    // a later cancel/unmount can't fire a second (refunding) reconcile.
+                    budgetRef.current = null;
 
                     if (!isBackgroundHandled) closeProcess();
                     else showToast(`Background Verification Complete for ${file ? file.name : 'Pasting'}`, 'success');
 
                     processFinalResults(chunks, html, file);
                 } catch (e) {
-                    if (cancelledRef.current || e?.name === "AbortError") return; // user cancelled
+                    if (cancelledRef.current || e?.name === "AbortError") return; // user cancelled (cancelAnalysis reconciles)
                     console.error("Attribution stage failed:", e);
+                    // Attribution never reconciled the reservation — release the unused
+                    // portion (the queue's real proxy-call count) so it doesn't leak.
+                    reconcileBudget((meta && typeof meta.proxyCalls === 'number') ? meta.proxyCalls : 0);
                     showToast("Scoring engine failed to attribute results.", "error");
                     closeProcess();
                 }
@@ -273,7 +324,7 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
             showToast("Networking Failure fetching pipeline chunks.", "error");
             closeProcess();
         }
-    }, [openProcess, updateProcess, closeProcess, deviceHash, processFinalResults, cancelAnalysis]);
+    }, [openProcess, updateProcess, closeProcess, deviceHash, processFinalResults, cancelAnalysis, reconcileBudget]);
 
     return {
         results, breakdown, overallLabel, handleAnalyze,

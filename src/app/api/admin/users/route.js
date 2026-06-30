@@ -17,7 +17,7 @@ export async function GET(req) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        const [users, totalScans, todayScans, totalPointsAgg, todayPointsAgg, betaCount] = await Promise.all([
+        const [users, pointsByUser, totalScans, todayScans, totalPointsAgg, todayPointsAgg, betaCount] = await Promise.all([
             prisma.user.findMany({
                 select: {
                     id: true,
@@ -26,11 +26,14 @@ export async function GET(req) {
                     role: true,
                     createdAt: true,
                     purchasedPoints: true,
-                    _count: { select: { quotaUsages: true } },
-                    quotaUsages: { select: { pointsCost: true } }
+                    // requestsMade is a correlated count (indexed); the points-spent
+                    // total is aggregated DB-side below instead of loading every
+                    // QuotaUsage row into memory (which grew unbounded over time).
+                    _count: { select: { quotaUsages: true } }
                 },
                 orderBy: { createdAt: 'desc' }
             }),
+            prisma.quotaUsage.groupBy({ by: ['userId'], _sum: { pointsCost: true } }),
             prisma.quotaUsage.count(),
             prisma.quotaUsage.count({ where: { createdAt: { gte: today } } }),
             prisma.quotaUsage.aggregate({ _sum: { pointsCost: true } }),
@@ -38,19 +41,21 @@ export async function GET(req) {
             prisma.user.count({ where: { betaTester: true } })
         ]);
 
-        const processedUsers = users.map(user => {
-            const totalPointsSpent = user.quotaUsages.reduce((sum, usage) => sum + (usage.pointsCost || 0), 0);
-            return {
-                id: user.id,
-                email: user.email,
-                name: user.name,
-                role: user.role,
-                createdAt: user.createdAt,
-                purchasedPoints: user.purchasedPoints,
-                requestsMade: user._count.quotaUsages,
-                pointsSpent: totalPointsSpent // compute client side total point usages
-            };
-        });
+        // userId → total points spent (guest rows have a null userId and are ignored here).
+        const pointsSpentByUser = new Map(
+            pointsByUser.map(g => [g.userId, g._sum.pointsCost || 0])
+        );
+
+        const processedUsers = users.map(user => ({
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+            createdAt: user.createdAt,
+            purchasedPoints: user.purchasedPoints,
+            requestsMade: user._count.quotaUsages,
+            pointsSpent: pointsSpentByUser.get(user.id) || 0
+        }));
 
         const tierBreakdown = { FREE: 0, PRO: 0, ULTRA: 0, ADMIN: 0 };
         users.forEach(u => {

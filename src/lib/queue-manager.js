@@ -101,6 +101,10 @@ class JotrilQueueManager {
         this.activeJobs.delete(jobId);
         this.queue = this.queue.filter(j => j.jobId !== jobId);
         this._notify();
+        // Return the proxy round-trips made so far so the caller can reconcile (refund)
+        // the UNUSED portion of the up-front budget reservation. onScanComplete never
+        // fires for a cancelled job, so without this the reservation would leak.
+        return job ? job.proxyCalls : 0;
     }
 
     /**

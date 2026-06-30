@@ -38,17 +38,28 @@ export async function POST(req) {
             null;
 
         const prisma = getPrisma();
-        await prisma.feedback.create({
-            data: {
-                userId,
-                email: resolvedEmail,
-                category,
-                message,
-                rating: ratingVal,
-                pageUrl: typeof pageUrl === 'string' ? pageUrl.slice(0, 500) : null,
-                userAgent: (req.headers.get('user-agent') || '').slice(0, 500) || null,
-            },
-        });
+        const data = {
+            userId,
+            email: resolvedEmail,
+            category,
+            message,
+            rating: ratingVal,
+            pageUrl: typeof pageUrl === 'string' ? pageUrl.slice(0, 500) : null,
+            userAgent: (req.headers.get('user-agent') || '').slice(0, 500) || null,
+        };
+
+        try {
+            await prisma.feedback.create({ data });
+        } catch (e) {
+            // A stale 30-day JWT can outlive a deleted user row → the userId FK
+            // violates (P2003). Don't 500 a guest's feedback: re-save it detached
+            // from the missing user (userId is nullable, onDelete: SetNull).
+            if (e?.code === 'P2003' && userId) {
+                await prisma.feedback.create({ data: { ...data, userId: null } });
+            } else {
+                throw e;
+            }
+        }
 
         return NextResponse.json({ success: true, message: 'Thank you — your feedback was sent.' });
     } catch (error) {

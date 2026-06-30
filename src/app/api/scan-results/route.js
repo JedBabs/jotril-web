@@ -108,6 +108,12 @@ export async function POST(req) {
 
         return NextResponse.json({ id: saved.id, createdAt: saved.createdAt });
     } catch (error) {
+        // A stale 30-day JWT can outlive a deleted user row → the userId FK violates
+        // (P2003). Treat it as an expired session (the client save is best-effort and
+        // ignores this) rather than a 500 server error.
+        if (error?.code === 'P2003') {
+            return NextResponse.json({ error: 'Session no longer valid' }, { status: 401 });
+        }
         console.error('[ScanResults] Error saving:', error);
         return NextResponse.json({ error: 'Failed to save scan result' }, { status: 500 });
     }

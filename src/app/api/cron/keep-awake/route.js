@@ -1,44 +1,44 @@
 import { NextResponse } from 'next/server';
-import { queryJotrilModel, SPACES } from '@/lib/jotrilService';
+import { pingJotrilModels, SPACES } from '@/lib/jotrilService';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * Keep-Awake Cron Route
- * This endpoint should be called every 23 hours to prevent Hugging Face spaces from sleeping.
- * It sends a minimal ping request to all configured spaces.
+ * Called daily (vercel.json) to prevent the Hugging Face Spaces from sleeping after 48h.
+ * Vercel automatically sends `Authorization: Bearer ${CRON_SECRET}` when CRON_SECRET is set.
  */
 export async function GET(req) {
-    // Only allow authorized calls if a CRON_SECRET is set
+    const secret = process.env.CRON_SECRET;
+
+    // Fail CLOSED in production: this endpoint triggers HF inference (cost/abuse), so an
+    // unprotected one is a liability. If CRON_SECRET isn't configured in prod, refuse to
+    // run rather than serve an open endpoint. (Dev with no secret still runs freely.)
+    if (process.env.NODE_ENV === 'production' && !secret) {
+        console.error('[Keep-Awake] CRON_SECRET is not set — refusing to run an unauthenticated cron in production.');
+        return NextResponse.json({ error: 'Cron not configured' }, { status: 503 });
+    }
     const authHeader = req.headers.get('authorization');
-    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    if (secret && authHeader !== `Bearer ${secret}`) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     try {
-        console.log('⏰ [Keep-Awake] Starting space pings...');
+        console.log('⏰ [Keep-Awake] Warming spaces...');
 
-        // Use a short, simple text for the ping. A real inference request resets each
-        // Space's 48h sleep timer. SPACES is imported from jotrilService (single source
-        // of truth), so adding/removing a Space there keeps this cron in sync automatically.
-        const pingText = "Is the engine active?";
+        // pingJotrilModels fires a submit at each Space's inference endpoint and does NOT
+        // poll for the result. Reaching the endpoint with a real job resets the 48h sleep
+        // timer; not awaiting the (30-60s cold-start) inference keeps us well under the
+        // serverless function timeout. SPACES stays the single source of truth.
+        const reached = await pingJotrilModels();
 
-        const results = await Promise.allSettled(
-            SPACES.map(space => queryJotrilModel(pingText, space))
-        );
-
-        const summary = results.map((res, idx) => ({
-            space: SPACES[idx],
-            status: res.status,
-            error: res.status === 'rejected' ? res.reason.message : null
-        }));
-
-        console.log('✅ [Keep-Awake] Pings completed:', summary);
+        console.log(`✅ [Keep-Awake] Warmed ${reached ? 'spaces' : 'no spaces'}.`);
 
         return NextResponse.json({
             success: true,
             timestamp: new Date().toISOString(),
-            results: summary
+            spaces: SPACES.length,
+            reached,
         });
 
     } catch (error) {
