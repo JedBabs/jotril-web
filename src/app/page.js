@@ -24,9 +24,10 @@ const products = [
             </svg>
         ),
         status: "live",
-        // Link to the /text route directly (not the textscanner.* subdomain): it's the
-        // same scanner page and works on every environment regardless of subdomain DNS.
-        href: "/text",
+        // Deep-link straight to the scanner section on the /text page so users land where
+        // they can scan immediately (skipping the hero). Relative route works on every
+        // environment, unlike the textscanner.* subdomain.
+        href: "/text#scanner",
         gradient: "from-[var(--dyn-accent-blue)] to-[#06B6D4]",
         glowColor: "rgba(37, 99, 235, 0.3)",
         accentColor: "var(--dyn-accent-blue)",
@@ -369,7 +370,7 @@ export default function BrandLanding() {
                             Explore Our Tools →
                         </button>
                         <a
-                            href="/text"
+                            href="/text#scanner"
                             className="hover:scale-105 active:scale-95 duration-300 transition-transform font-bold text-base py-4 px-10 rounded-full border-2 backdrop-blur-sm"
                             style={{
                                 borderColor: "var(--dyn-silver-dark)",
@@ -517,7 +518,7 @@ export default function BrandLanding() {
                                 Try our Text Scanner for free — no sign-up required for basic scans.
                             </p>
                             <a
-                                href="/text"
+                                href="/text#scanner"
                                 className="btn-shimmer inline-flex items-center gap-2 hover:scale-[1.06] hover:-translate-y-1 active:scale-95 transition-transform duration-300 font-bold text-base py-4 px-10 rounded-full text-white"
                                 style={{
                                     background: "linear-gradient(135deg, var(--dyn-accent-blue), var(--dyn-accent-purple))",
@@ -547,7 +548,7 @@ export default function BrandLanding() {
                         © {new Date().getFullYear()} Jotril AI. All rights reserved.
                     </p>
                     <div className="flex gap-6">
-                        <a href="/text" className="text-sm font-medium transition-colors hover:text-[var(--dyn-accent-blue)]" style={{ color: "var(--dyn-ash)" }}>
+                        <a href="/text#scanner" className="text-sm font-medium transition-colors hover:text-[var(--dyn-accent-blue)]" style={{ color: "var(--dyn-ash)" }}>
                             Text Scanner
                         </a>
                     </div>

@@ -264,6 +264,20 @@ export default function Home() {
         return () => window.removeEventListener("mousemove", handleMouseMove);
     }, [mouseX, mouseY]);
 
+    // Deep-link support: arriving at /text#scanner (from the landing "Try Text Scanner"
+    // CTAs) jumps straight to the scanner once the real content is mounted. Native hash
+    // scrolling can land at the top when the target sits below the full-screen animated
+    // hero, so do it explicitly after `mounted`.
+    useEffect(() => {
+        if (!mounted) return;
+        const id = window.location.hash.slice(1);
+        if (!id) return;
+        const t = setTimeout(() => {
+            document.getElementById(id)?.scrollIntoView({ behavior: "auto", block: "start" });
+        }, 60);
+        return () => clearTimeout(t);
+    }, [mounted]);
+
     const isLoggedIn = !!session?.user;
     const userRole = session?.user?.role || "UNAUTHENTICATED";
 
