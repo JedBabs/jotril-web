@@ -6,6 +6,8 @@ import { ProcessProvider } from "./ProcessContext";
 import ScanGuard from "./ScanGuard";
 import OfflineBanner from "./OfflineBanner";
 import ServiceWorkerRegister from "./ServiceWorkerRegister";
+import ToastContainer from "./Toast";
+import FeedbackWidget from "./FeedbackWidget";
 
 // Dev-only diagnostics overlay. It's heavy for what it is — it statically pulls in
 // the queue manager + jotrilService and installs global error/fetch interceptors —
@@ -29,6 +31,8 @@ export default function Providers({ children }) {
                     <OfflineBanner />
                     <ServiceWorkerRegister />
                     <ScanGuard />
+                    <FeedbackWidget />
+                    <ToastContainer />
                     <DevTools />
                 </ThemeProvider>
             </ProcessProvider>

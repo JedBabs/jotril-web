@@ -11,6 +11,7 @@ function VerifyContent() {
 
     const [status, setStatus] = useState('verifying'); // verifying, success, error
     const [message, setMessage] = useState('');
+    const [betaPro, setBetaPro] = useState(false);
 
     useEffect(() => {
         if (!token) {
@@ -34,7 +35,12 @@ function VerifyContent() {
                     setMessage(data.error || 'Verification failed.');
                 } else {
                     setStatus('success');
-                    setMessage('Your email has been successfully verified! You can now access your account.');
+                    setBetaPro(!!data.betaPro);
+                    setMessage(
+                        data.betaPro
+                            ? 'Your email is verified and Pro is now active free for 2 months — no card needed. Sign in to start scanning.'
+                            : 'Your email has been successfully verified! You can now access your account.'
+                    );
                 }
             } catch (err) {
                 setStatus('error');
@@ -60,7 +66,12 @@ function VerifyContent() {
                     <div className="w-16 h-16 rounded-full bg-score-human/20 text-score-human flex items-center justify-center mx-auto mb-4">
                         <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
                     </div>
-                    <h3 className="text-2xl font-black text-navy tracking-tight">Email Verified!</h3>
+                    <h3 className="text-2xl font-black text-navy tracking-tight">{betaPro ? 'Pro Activated! 🎉' : 'Email Verified!'}</h3>
+                    {betaPro && (
+                        <div className="inline-block px-3 py-1.5 rounded-full text-xs font-black bg-accent-blue/10 text-accent-blue">
+                            2 months of Jotril Pro — on us
+                        </div>
+                    )}
                     <p className="text-ash text-sm font-medium">{message}</p>
                     <button onClick={() => router.push('/auth/signin')}
                         className="w-full mt-4 flex justify-center py-3.5 px-4 rounded-xl text-sm font-bold text-white bg-accent-blue hover:bg-accent-blue-light transition-all btn-shimmer shadow-[0_4px_14px_rgba(37,99,235,0.25)]">

@@ -5,7 +5,7 @@ import { motion, AnimatePresence, useMotionValue, useSpring } from "framer-motio
 import dynamic from "next/dynamic";
 import Navbar from "@/components/Navbar";
 import FileUploader from "@/components/FileUploader";
-import ToastContainer, { showToast } from "@/components/Toast";
+import { showToast } from "@/components/Toast";
 import { usePPP } from "@/hooks/usePPP";
 import { useAnalyze } from "@/hooks/useAnalyze";
 import QuotaBar from "@/components/QuotaBar";
@@ -290,7 +290,6 @@ export default function Home() {
             <InteractiveBackground />
 
             <Navbar session={session} onSignOut={() => signOut()} />
-            <ToastContainer />
 
             {/* ══════════════════════════════════════════════
                 HERO — Cinematic Fullscreen

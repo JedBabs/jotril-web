@@ -163,6 +163,13 @@ export default function HeatmapViewer({ chunks, devMode = false, previewLimit = 
                     </p>
                 </div>
             )}
+
+            {/* Accuracy disclaimer — shown with every result */}
+            <p className="text-xs px-5 leading-relaxed" style={{ color: "var(--dyn-ash)" }}>
+                These results are a <span className="font-semibold">probabilistic estimate</span> and may be inaccurate
+                (both false positives and false negatives are possible). They are not proof of authorship and should not
+                be the sole basis for any academic or disciplinary decision. Always apply human judgement.
+            </p>
         </div>
     );
 }

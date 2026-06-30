@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { signIn } from 'next-auth/react';
 import { motion } from 'framer-motion';
 
+const BETA_EMAIL_DOMAIN = 'stu.cu.edu.ng';
+
 const benefits = [
     { icon: "📊", text: "Track your scan history & usage" },
     { icon: "⚡", text: "2× more daily points than guests" },
@@ -20,9 +22,16 @@ export default function SignUpPage() {
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [agreed, setAgreed] = useState(false);
+
+    const isCuEmail = email.toLowerCase().trim().endsWith(`@${BETA_EMAIL_DOMAIN}`);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (!agreed) {
+            setError('Please accept the Terms and Privacy Policy to continue.');
+            return;
+        }
         setIsLoading(true);
         setError('');
 
@@ -76,6 +85,11 @@ export default function SignUpPage() {
                     Already have an account?{' '}
                     <a href="/auth/signin" className="text-accent-blue font-bold hover:text-accent-blue-light transition-colors">Sign in</a>
                 </motion.p>
+                <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }} className="mt-4 text-center text-xs font-semibold">
+                    <span className="inline-block px-3 py-1.5 rounded-full bg-accent-blue/10 text-accent-blue">
+                        🎓 Covenant University students get <span className="font-black">Pro free for 2 months</span> — verify your @stu.cu.edu.ng email
+                    </span>
+                </motion.p>
             </motion.div>
 
             <motion.div
@@ -98,6 +112,11 @@ export default function SignUpPage() {
                             <input id="email" name="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)}
                                 className="block w-full px-4 py-3 border border-silver rounded-xl bg-white/50 placeholder-ash-light focus:outline-none focus:border-accent-blue focus:ring-2 focus:ring-accent-blue/10 transition-all text-navy font-medium"
                                 placeholder="you@example.com" />
+                            {isCuEmail && (
+                                <p className="mt-1.5 text-xs font-bold text-score-human flex items-center gap-1">
+                                    🎉 Nice — you&rsquo;ll get Pro free for 2 months once you verify this email.
+                                </p>
+                            )}
                         </motion.div>
 
                         <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 }}>
@@ -138,8 +157,20 @@ export default function SignUpPage() {
                             </motion.div>
                         )}
 
+                        <motion.label initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.33 }}
+                            htmlFor="agree" className="flex items-start gap-2.5 cursor-pointer select-none">
+                            <input id="agree" type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)}
+                                className="mt-0.5 h-4 w-4 rounded border-silver text-accent-blue focus:ring-accent-blue/30 shrink-0" />
+                            <span className="text-xs text-ash leading-relaxed">
+                                I agree to the{' '}
+                                <a href="/legal/terms" target="_blank" className="text-accent-blue font-semibold hover:underline">Terms of Service</a>{' '}and{' '}
+                                <a href="/legal/privacy" target="_blank" className="text-accent-blue font-semibold hover:underline">Privacy Policy</a>,
+                                and understand Jotril is in beta and its results are estimates, not proof.
+                            </span>
+                        </motion.label>
+
                         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}>
-                            <motion.button type="submit" disabled={isLoading || !!successMsg} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}
+                            <motion.button type="submit" disabled={isLoading || !!successMsg || !agreed} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}
                                 className="w-full flex justify-center py-3.5 px-4 border border-transparent rounded-xl text-sm font-bold text-white bg-accent-blue hover:bg-accent-blue-light focus:outline-none focus:ring-4 focus:ring-accent-blue/20 transition-all disabled:opacity-50 disabled:shadow-none btn-shimmer shadow-[0_4px_14px_rgba(37,99,235,0.25)]">
                                 {isLoading ? 'Creating account...' : successMsg ? 'Account Created' : 'Sign up'}
                             </motion.button>

@@ -5,6 +5,8 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import getPrisma from "@/lib/prisma";
 import bcrypt from "bcrypt";
 import { checkBruteForce, recordFailedLogin, clearBruteForce } from "@/lib/auth-security";
+import { effectiveRole, grantBetaProIfEligible } from "@/lib/beta";
+import { sendBetaProEmail } from "@/lib/email";
 
 const prisma = getPrisma();
 
@@ -140,7 +142,8 @@ export const authOptions = {
                     id: user.id,
                     name: user.name,
                     email: user.email,
-                    role: user.role
+                    role: user.role,
+                    roleExpiresAt: user.roleExpiresAt
                 };
             }
         })
@@ -157,22 +160,45 @@ export const authOptions = {
                     token.id = user.id;
                     token.isDev = true;
                 } else {
-                    // If OAuth user just got created/signed-in, they may not have a role in the object yet, 
+                    // If OAuth user just got created/signed-in, they may not have a role in the object yet,
                     // but the Prisma schema defaults to 'FREE'. Let's ensure it's on the token.
                     const dbUser = await prisma.user.findUnique({ where: { email: token.email } });
-                    token.role = dbUser?.role || user.role || 'FREE';
-                    token.id = dbUser?.id || user.id;
+                    let resolved = dbUser;
+                    // Beta comp for OAuth (Google) CU students: they never hit /api/auth/verify-email
+                    // (Google verifies the email), so grant here on sign-in. Idempotent — a credentials
+                    // user already granted at verification returns `already_beta` and re-grants nothing.
+                    if (dbUser) {
+                        try {
+                            const beta = await grantBetaProIfEligible(prisma, dbUser);
+                            if (beta.granted) {
+                                resolved = { ...dbUser, role: 'PRO', roleExpiresAt: beta.expiresAt };
+                                const baseUrl = process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL || '';
+                                sendBetaProEmail(dbUser.email, baseUrl, beta.expiresAt).catch((e) =>
+                                    console.warn('[jwt] beta Pro email failed', e)
+                                );
+                            }
+                        } catch (e) {
+                            console.warn('[jwt] beta grant failed', e);
+                        }
+                    }
+                    token.role = resolved?.role || user.role || 'FREE';
+                    token.roleExpiresAt = resolved?.roleExpiresAt || user.roleExpiresAt || null;
+                    token.id = resolved?.id || user.id;
                 }
             }
             // Allow manual role updates (e.g. from admin panel modifying sessions)
             if (trigger === "update" && session?.role) {
                 token.role = session.role;
+                token.roleExpiresAt = session.roleExpiresAt ?? token.roleExpiresAt ?? null;
             }
             return token;
         },
         async session({ session, token }) {
             if (session.user) {
-                session.user.role = token.role;
+                // effectiveRole() reverts a time-limited grant (e.g. 2-month beta Pro)
+                // to FREE once roleExpiresAt has passed — enforced live, no cron/DB hit.
+                session.user.role = effectiveRole({ role: token.role, roleExpiresAt: token.roleExpiresAt });
+                session.user.roleExpiresAt = token.roleExpiresAt || null;
                 session.user.id = token.id;
                 if (token.isDev) {
                     session.user.isDev = true;

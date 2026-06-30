@@ -539,19 +539,27 @@ export default function BrandLanding() {
                 FOOTER
             ══════════════════════════════════════════════ */}
             <footer className="py-12 border-t" style={{ borderColor: "var(--dyn-glass-border)", background: "var(--dyn-bg-white)" }}>
-                <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
-                    <div className="flex items-center gap-1">
-                        <span className="text-lg font-black" style={{ color: "var(--dyn-text-navy)" }}>Jotril</span>
-                        <span className="text-lg font-black" style={{ color: "var(--dyn-accent-blue)" }}>AI.</span>
+                <div className="max-w-6xl mx-auto px-6">
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+                        <div className="flex items-center gap-2">
+                            <span className="text-lg font-black" style={{ color: "var(--dyn-text-navy)" }}>Jotril</span>
+                            <span className="text-lg font-black" style={{ color: "var(--dyn-accent-blue)" }}>AI.</span>
+                            <span className="ml-1 text-[10px] font-bold tracking-wide px-2 py-0.5 rounded-full" style={{ background: "var(--dyn-accent-blue)", color: "#fff" }}>BETA</span>
+                        </div>
+                        <p className="text-sm" style={{ color: "var(--dyn-ash)" }}>
+                            © {new Date().getFullYear()} Jotril AI. All rights reserved.
+                        </p>
+                        <div className="flex flex-wrap gap-x-6 gap-y-2 justify-center">
+                            <a href="/text#scanner" className="text-sm font-medium transition-colors hover:text-[var(--dyn-accent-blue)]" style={{ color: "var(--dyn-ash)" }}>Text Scanner</a>
+                            <a href="/legal/terms" className="text-sm font-medium transition-colors hover:text-[var(--dyn-accent-blue)]" style={{ color: "var(--dyn-ash)" }}>Terms</a>
+                            <a href="/legal/privacy" className="text-sm font-medium transition-colors hover:text-[var(--dyn-accent-blue)]" style={{ color: "var(--dyn-ash)" }}>Privacy</a>
+                            <a href="/legal/beta" className="text-sm font-medium transition-colors hover:text-[var(--dyn-accent-blue)]" style={{ color: "var(--dyn-ash)" }}>Beta Notice</a>
+                        </div>
                     </div>
-                    <p className="text-sm" style={{ color: "var(--dyn-ash)" }}>
-                        © {new Date().getFullYear()} Jotril AI. All rights reserved.
+                    <p className="mt-8 text-xs text-center max-w-3xl mx-auto leading-relaxed" style={{ color: "var(--dyn-ash)" }}>
+                        Jotril AI is in private beta. Detection results are probabilistic estimates, not proof, and can be inaccurate.
+                        They must not be used as the sole basis for academic, disciplinary, or other consequential decisions. Always apply human judgement.
                     </p>
-                    <div className="flex gap-6">
-                        <a href="/text#scanner" className="text-sm font-medium transition-colors hover:text-[var(--dyn-accent-blue)]" style={{ color: "var(--dyn-ash)" }}>
-                            Text Scanner
-                        </a>
-                    </div>
                 </div>
             </footer>
         </main>

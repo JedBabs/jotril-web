@@ -27,7 +27,7 @@ import dynamic from "next/dynamic";
 import GlitchLogo from "@/components/GlitchLogo";
 import QuotaBar from "@/components/QuotaBar";
 import FileUploader from "@/components/FileUploader";
-import ToastContainer, { showToast } from "@/components/Toast";
+import { showToast } from "@/components/Toast";
 import QueueSidebar from "@/components/QueueSidebar";
 
 // Below-the-fold / conditional components — code-split out of the dashboard's
@@ -205,8 +205,6 @@ export default function EnhancedAccountPortal() {
                         </motion.button>
                     </div>
                 </header>
-
-                <ToastContainer />
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
 

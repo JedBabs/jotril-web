@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ShieldCheck, UserCog, Mail, Calendar, LogOut, CheckCircle, Plus, Undo2, RotateCcw, ChevronDown, ChevronRight, Save, Zap, Upload, Play, Check, Trash2, BarChart3, XCircle, AlertTriangle, ArrowRight, Database } from 'lucide-react';
+import { ShieldCheck, UserCog, Mail, Calendar, LogOut, CheckCircle, Plus, Undo2, RotateCcw, ChevronDown, ChevronRight, Save, Zap, Upload, Play, Check, Trash2, BarChart3, XCircle, AlertTriangle, ArrowRight, Database, MessageSquare } from 'lucide-react';
 import { useSession, signOut } from 'next-auth/react';
-import ToastContainer, { showToast } from '@/components/Toast';
+import { showToast } from '@/components/Toast';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const tierColors = {
@@ -89,8 +89,6 @@ export default function AdminDashboardPage() {
             <div className="floating-orb w-3 h-3 bg-score-ai/15 top-[12%] left-[8%]" style={{ animationDelay: '2s' }} />
             <div className="floating-orb w-2 h-2 bg-accent-purple/15 bottom-[15%] right-[12%]" style={{ animationDelay: '5s' }} />
 
-            <ToastContainer />
-
             <div className="relative z-10 max-w-7xl mx-auto p-6 md:p-10">
                 {/* Header */}
                 <motion.div
@@ -118,6 +116,10 @@ export default function AdminDashboardPage() {
                             className="text-sm font-semibold text-ash hover:text-navy transition-colors glass-card !rounded-full px-4 py-2">
                             Home
                         </motion.button>
+                        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => router.push('/admin/feedback')}
+                            className="text-sm font-semibold text-ash hover:text-accent-blue transition-colors glass-card !rounded-full px-4 py-2 flex items-center gap-1.5">
+                            <MessageSquare className="w-4 h-4" /> Feedback
+                        </motion.button>
                         <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => fetchUsers()}
                             className="text-sm font-semibold text-ash hover:text-accent-blue transition-colors glass-card !rounded-full px-4 py-2">
                             Refresh
@@ -128,6 +130,40 @@ export default function AdminDashboardPage() {
                         </motion.button>
                     </div>
                 </motion.div>
+
+                {/* Beta slot usage */}
+                {stats && stats.betaCap ? (
+                    <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="glass-card !rounded-2xl p-5 mb-6 flex flex-col sm:flex-row sm:items-center gap-5"
+                    >
+                        <div className="flex items-center gap-3 shrink-0">
+                            <div className="w-11 h-11 rounded-xl bg-accent-blue/10 flex items-center justify-center">
+                                <UserCog className="w-6 h-6 text-accent-blue" />
+                            </div>
+                            <div>
+                                <h3 className="text-[10px] font-bold text-ash uppercase tracking-[0.15em]">Beta Testers · CU Pro comp</h3>
+                                <p className="text-2xl font-black text-navy">
+                                    {stats.betaTesters}
+                                    <span className="text-ash text-lg font-bold"> / {stats.betaCap} claimed</span>
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex-1 w-full">
+                            <div className="h-3 w-full rounded-full bg-silver/40 overflow-hidden">
+                                <div
+                                    className="h-full rounded-full bg-gradient-to-r from-accent-blue to-accent-cyan transition-all"
+                                    style={{ width: `${Math.min(100, (stats.betaTesters / stats.betaCap) * 100)}%` }}
+                                />
+                            </div>
+                            <p className="text-xs text-ash font-medium mt-2">
+                                {Math.max(0, stats.betaCap - stats.betaTesters)} free Pro slot{stats.betaCap - stats.betaTesters === 1 ? '' : 's'} remaining
+                                {stats.betaTesters >= stats.betaCap && ' — beta is full; new CU signups stay on Free'}
+                            </p>
+                        </div>
+                    </motion.div>
+                ) : null}
 
                 {/* Platform Analytics Cards */}
                 {stats && (

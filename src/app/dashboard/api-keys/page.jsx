@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import GlitchLogo from "@/components/GlitchLogo";
 import InteractiveBackground from "@/components/InteractiveBackground";
-import ToastContainer, { showToast } from "@/components/Toast";
+import { showToast } from "@/components/Toast";
 
 export default function ApiKeysPage() {
     const { data: session, status } = useSession();
@@ -104,8 +104,6 @@ export default function ApiKeysPage() {
                         </button>
                     </div>
                 </header>
-
-                <ToastContainer />
 
                 <div className="mb-8">
                     <h1 className="text-4xl font-black tracking-tight flex items-center gap-3">
