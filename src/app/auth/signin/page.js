@@ -14,6 +14,35 @@ export default function SignInPage() {
     const [isLoading, setIsLoading] = useState(false);
     const [isDevMode, setIsDevMode] = useState(false);
     const [devPin, setDevPin] = useState('');
+    const [resending, setResending] = useState(false);
+    const [resendMsg, setResendMsg] = useState('');
+
+    // Sign-in is blocked until the email is verified (authorize() throws this). When we
+    // see that specific error, offer a one-click way to re-send the verification email
+    // (covers the "it went to spam / I lost it" case — the #1 signup dead-end).
+    const needsVerify = /verify your email/i.test(error);
+
+    const handleResend = async () => {
+        if (!email) {
+            setResendMsg('Enter your email above first.');
+            return;
+        }
+        setResending(true);
+        setResendMsg('');
+        try {
+            const res = await fetch('/api/auth/resend-verification', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email }),
+            });
+            const data = await res.json().catch(() => ({}));
+            setResendMsg(data.message || 'If an unverified account exists, a new link is on its way.');
+        } catch {
+            setResendMsg('Could not resend right now. Please try again shortly.');
+        } finally {
+            setResending(false);
+        }
+    };
 
     // Redirect already-authenticated users to the dashboard
     useEffect(() => {
@@ -197,6 +226,27 @@ export default function SignInPage() {
                                 className="rounded-xl bg-score-ai/5 p-4 border border-score-ai/20"
                             >
                                 <h3 className="text-sm font-semibold text-score-ai text-center">{error}</h3>
+                                {needsVerify && (
+                                    <div className="mt-3 text-center">
+                                        <button
+                                            type="button"
+                                            onClick={handleResend}
+                                            disabled={resending}
+                                            className="text-sm font-bold text-accent-blue hover:text-accent-blue-light transition-colors disabled:opacity-50"
+                                        >
+                                            {resending ? 'Sending…' : 'Resend verification email'}
+                                        </button>
+                                    </div>
+                                )}
+                            </motion.div>
+                        )}
+                        {resendMsg && (
+                            <motion.div
+                                initial={{ opacity: 0, scale: 0.95 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                className="rounded-xl bg-accent-blue/5 p-3 border border-accent-blue/20"
+                            >
+                                <p className="text-xs font-semibold text-accent-blue text-center">{resendMsg}</p>
                             </motion.div>
                         )}
 

@@ -51,7 +51,7 @@ export default function SignUpPage() {
             }
 
             // Successfully registered! Do not auto-login because they need to verify their email first.
-            setSuccessMsg("Registration successful! We've sent a verification link to your email. Please verify your account before signing in.");
+            setSuccessMsg("Registration successful! We've sent a verification link to your email — check your inbox (and your spam folder). Didn't get it? You can resend it from the sign-in page.");
             setIsLoading(false);
 
         } catch (err) {

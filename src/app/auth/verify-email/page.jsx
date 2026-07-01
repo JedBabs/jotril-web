@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, Suspense } from 'react';
+import { useEffect, useRef, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 
@@ -9,18 +9,24 @@ function VerifyContent() {
     const searchParams = useSearchParams();
     const token = searchParams.get('token');
 
-    const [status, setStatus] = useState('verifying'); // verifying, success, error
+    const [status, setStatus] = useState('verifying'); // verifying, success, used, error
     const [message, setMessage] = useState('');
     const [betaPro, setBetaPro] = useState(false);
+    // Verification tokens are one-time (consumed + deleted on success). Guard against a
+    // double-invoke (React StrictMode in dev) so the second call can't overwrite a
+    // successful verify with an "invalid token" error.
+    const ranRef = useRef(false);
 
     useEffect(() => {
-        if (!token) {
-            setStatus('error');
-            setMessage('No verification token provided. Invalid link.');
-            return;
-        }
+        if (ranRef.current) return;
+        ranRef.current = true;
 
         const verifyEmail = async () => {
+            if (!token) {
+                setStatus('error');
+                setMessage('No verification token provided. Invalid link.');
+                return;
+            }
             try {
                 const res = await fetch('/api/auth/verify-email', {
                     method: 'POST',
@@ -31,7 +37,12 @@ function VerifyContent() {
                 const data = await res.json();
 
                 if (!res.ok) {
-                    setStatus('error');
+                    // A consumed/expired token (the common "I clicked the link twice or
+                    // refreshed" case) isn't a real failure — the user is very likely
+                    // already verified. Present it gently with a Sign In path rather than
+                    // a scary red error. Genuine errors still fall through to 'error'.
+                    const usedOrExpired = /invalid|expired|already/i.test(data.error || '');
+                    setStatus(usedOrExpired ? 'used' : 'error');
                     setMessage(data.error || 'Verification failed.');
                 } else {
                     setStatus('success');
@@ -76,6 +87,22 @@ function VerifyContent() {
                     <button onClick={() => router.push('/auth/signin')}
                         className="w-full mt-4 flex justify-center py-3.5 px-4 rounded-xl text-sm font-bold text-white bg-accent-blue hover:bg-accent-blue-light transition-all btn-shimmer shadow-[0_4px_14px_rgba(37,99,235,0.25)]">
                         Sign In Now
+                    </button>
+                </motion.div>
+            )}
+
+            {status === 'used' && (
+                <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="space-y-6">
+                    <div className="w-16 h-16 rounded-full bg-accent-blue/15 text-accent-blue flex items-center justify-center mx-auto mb-4">
+                        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                    </div>
+                    <h3 className="text-2xl font-black text-navy tracking-tight">This link’s already been used</h3>
+                    <p className="text-ash text-sm font-medium">
+                        If you&rsquo;ve already verified your email, you&rsquo;re all set — just sign in. If the link expired, you can request a fresh one from the sign-in page.
+                    </p>
+                    <button onClick={() => router.push('/auth/signin')}
+                        className="w-full mt-2 flex justify-center py-3.5 px-4 rounded-xl text-sm font-bold text-white bg-accent-blue hover:bg-accent-blue-light transition-all btn-shimmer shadow-[0_4px_14px_rgba(37,99,235,0.25)]">
+                        Sign In
                     </button>
                 </motion.div>
             )}
