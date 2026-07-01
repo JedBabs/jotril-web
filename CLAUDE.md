@@ -844,10 +844,16 @@ Resend rejected sends with `422 Invalid 'from' field` because the env value reac
 ### GlitchFavicon — FIXED (`src/components/GlitchFavicon.jsx`)
 The glitch stopped after a nav-crash fix because Next auto-injects icon links from `app/favicon.ico` **and** `app/icon.svg`, and Chrome **prefers the SVG** — so updating only our appended link was invisible. Now `setFavicon` sets the same frame on **every** icon link (strips `type`/`sizes` so the SVG isn't preferred) and **replaces our own link node each frame** (Safari only repaints on re-insertion). Only ever mutates attributes / swaps our own imperatively-created node — **never removes Next-managed `<head>` nodes** (that removal is what crashed navigation with the old MutationObserver). Idempotent; no accumulation. Chromium/Firefox animate; Safari-desktop best-effort (`data:`-URL favicons are finicky); iOS shows none (no tab favicons).
 
-### Outstanding manual steps (carried)
-1. **`npx prisma db push`** — beta `User` cols + `Feedback` table (from §21) **AND the new `Feedback.screenshot` col** + the §15 `QuotaUsage` composite indexes. Additive/safe.
-2. **Google OAuth:** add `https://www.jotril.com/api/auth/callback/google`; confirm prod `NEXTAUTH_URL`.
-3. **Resend:** SPF/DKIM (domain verified; send a real test to confirm inbox, not spam).
-4. **`CRON_SECRET`** set in prod (else keep-awake 503s).
-5. Secret hygiene: `HF_TOKEN`, `GOOGLE_CLIENT_SECRET`, `RESEND_API_KEY`, DB pwd, `GCP_SA_KEY` surfaced in session transcripts — rotate before public launch.
-6. Deferred/optional: result cache keyed by `(textHash+engineConfigVersion+depth)` (re-scan re-spends invocations, only points are cached); post-beta unsubscribe line in broadcasts; strict CSP; `.git` HF-token rotation.
+### Outstanding manual steps
+**✅ DONE 2026-07-01:**
+- **`npx prisma db push`** — ran; the full current schema is now live: beta `User` cols + `Feedback` table (§21), `Feedback.screenshot`, `User.image`, and the §15 `QuotaUsage` composite indexes all pushed together. (Confirmed indirectly: Google OAuth `createUser` succeeds → `User.image` exists.)
+- **Google OAuth** — `https://www.jotril.com/api/auth/callback/google` added + prod `NEXTAUTH_URL` confirmed + `User.image` added; **Google sign-in confirmed working end-to-end**.
+- **Resend delivery** — confirmed mail lands in a real inbox (domain verified + `resolveFrom()` `from` fix).
+- **`CRON_SECRET`** — set in prod; keep-awake confirmed authorized (Spaces stay warm).
+
+**→ All hard pre-beta gates cleared as of 2026-07-01. Remaining items are post-beta hardening, not blockers.**
+
+**⏳ POST-BETA HARDENING (non-blocking):**
+1. **Secret hygiene:** `HF_TOKEN`, `GOOGLE_CLIENT_SECRET`, `RESEND_API_KEY`, DB pwd, `GCP_SA_KEY` surfaced in session transcripts — rotate before PUBLIC launch.
+2. **Vercel Pro upgrade** required before public/commercial launch (Hobby is non-commercial + 1M-invocation hard pause — §14).
+3. **Deferred/optional:** result cache keyed by `(textHash+engineConfigVersion+depth)` (re-scan re-spends invocations, only points are cached); post-beta unsubscribe line in broadcasts; strict CSP; `.git` HF-token rotation; the tab-close/cancel-during-analyze budget-reconcile residual (§22); lawyer review of legal pages before public launch.
