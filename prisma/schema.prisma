@@ -148,6 +148,7 @@ model Feedback {
   userAgent String? // Browser UA for repro context
   status    String   @default("NEW") // NEW | IN_PROGRESS | RESOLVED | WONTFIX
   adminNote String?  @db.Text // Internal triage note
+  screenshot String? @db.Text // Optional screenshot as a base64 data URL (client-downscaled JPEG, capped). Null = none.
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

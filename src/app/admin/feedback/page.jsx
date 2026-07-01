@@ -4,8 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
-import { motion } from 'framer-motion';
-import { ArrowLeft, MessageSquare, Bug, Lightbulb, Frown, Heart, MessageCircle, Trash2, RefreshCw } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ArrowLeft, MessageSquare, Bug, Lightbulb, Frown, Heart, MessageCircle, Trash2, RefreshCw, Image as ImageIcon, X } from 'lucide-react';
 import { showToast } from '@/components/Toast';
 
 const STATUSES = ['NEW', 'IN_PROGRESS', 'RESOLVED', 'WONTFIX'];
@@ -26,6 +26,23 @@ export default function AdminFeedbackPage() {
     const [filter, setFilter] = useState('');
     const [loading, setLoading] = useState(true);
     const [nextCursor, setNextCursor] = useState(null);
+    const [lightbox, setLightbox] = useState(null); // data URL of an opened screenshot
+    const [loadingShot, setLoadingShot] = useState(null); // feedback id currently loading
+
+    const viewScreenshot = async (id) => {
+        setLoadingShot(id);
+        try {
+            const res = await fetch(`/api/admin/feedback/${id}`);
+            if (!res.ok) throw new Error('Could not load screenshot');
+            const data = await res.json();
+            if (!data.screenshot) throw new Error('No screenshot found');
+            setLightbox(data.screenshot);
+        } catch (err) {
+            showToast(err.message || 'Could not load screenshot.', 'error');
+        } finally {
+            setLoadingShot(null);
+        }
+    };
 
     const load = useCallback(async (statusFilter = filter, cursor = null, append = false) => {
         setLoading(true);
@@ -142,10 +159,20 @@ export default function AdminFeedbackPage() {
 
                                     <p className="text-sm whitespace-pre-wrap mb-3" style={{ color: 'var(--dyn-text-navy)' }}>{it.message}</p>
 
-                                    <div className="text-xs mb-4 flex flex-wrap gap-x-4 gap-y-1" style={{ color: 'var(--dyn-ash)' }}>
+                                    <div className="text-xs mb-4 flex flex-wrap items-center gap-x-4 gap-y-1" style={{ color: 'var(--dyn-ash)' }}>
                                         {it.email && <span>{it.email}{it.userRole ? ` · ${it.userRole}` : ''}</span>}
                                         {it.pageUrl && <span>on {it.pageUrl}</span>}
                                         <span>{new Date(it.createdAt).toLocaleString()}</span>
+                                        {it.hasScreenshot && (
+                                            <button
+                                                onClick={() => viewScreenshot(it.id)}
+                                                disabled={loadingShot === it.id}
+                                                className="inline-flex items-center gap-1 font-semibold disabled:opacity-60 hover:text-[var(--dyn-accent-blue)]"
+                                                style={{ color: 'var(--dyn-accent-blue)' }}
+                                            >
+                                                <ImageIcon size={13} /> {loadingShot === it.id ? 'Loading…' : 'Screenshot'}
+                                            </button>
+                                        )}
                                     </div>
 
                                     {/* Triage controls */}
@@ -182,6 +209,35 @@ export default function AdminFeedbackPage() {
                     </div>
                 )}
             </div>
+
+            {/* Screenshot lightbox */}
+            <AnimatePresence>
+                {lightbox && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setLightbox(null)}
+                        className="fixed inset-0 z-[80] flex items-center justify-center p-4"
+                        style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
+                    >
+                        <button
+                            onClick={() => setLightbox(null)}
+                            aria-label="Close"
+                            className="absolute top-5 right-5 text-white/80 hover:text-white"
+                        >
+                            <X size={28} />
+                        </button>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                            src={lightbox}
+                            alt="Feedback screenshot"
+                            onClick={(e) => e.stopPropagation()}
+                            className="max-h-[90vh] max-w-[90vw] rounded-xl shadow-2xl"
+                        />
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

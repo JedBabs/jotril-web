@@ -120,6 +120,10 @@ export default function AdminDashboardPage() {
                             className="text-sm font-semibold text-ash hover:text-accent-blue transition-colors glass-card !rounded-full px-4 py-2 flex items-center gap-1.5">
                             <MessageSquare className="w-4 h-4" /> Feedback
                         </motion.button>
+                        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => router.push('/admin/broadcast')}
+                            className="text-sm font-semibold text-ash hover:text-accent-blue transition-colors glass-card !rounded-full px-4 py-2 flex items-center gap-1.5">
+                            <Mail className="w-4 h-4" /> Broadcast
+                        </motion.button>
                         <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => fetchUsers()}
                             className="text-sm font-semibold text-ash hover:text-accent-blue transition-colors glass-card !rounded-full px-4 py-2">
                             Refresh

@@ -11,7 +11,7 @@ const MAX_MESSAGE = 4000;
 export async function POST(req) {
     try {
         const body = await req.json().catch(() => ({}));
-        let { message, category, rating, email, pageUrl } = body;
+        let { message, category, rating, email, pageUrl, screenshot } = body;
 
         message = typeof message === 'string' ? message.trim() : '';
         if (!message) {
@@ -37,6 +37,15 @@ export async function POST(req) {
             (typeof email === 'string' && email.trim().slice(0, 200)) ||
             null;
 
+        // Accept only a reasonably-sized image data URL (the widget downscales to a small
+        // JPEG); anything else is dropped silently rather than failing the submission.
+        const screenshotVal =
+            (typeof screenshot === 'string' &&
+                /^data:image\/(png|jpe?g|webp|gif);base64,/.test(screenshot) &&
+                screenshot.length <= 1_500_000)
+                ? screenshot
+                : null;
+
         const prisma = getPrisma();
         const data = {
             userId,
@@ -44,6 +53,7 @@ export async function POST(req) {
             category,
             message,
             rating: ratingVal,
+            screenshot: screenshotVal,
             pageUrl: typeof pageUrl === 'string' ? pageUrl.slice(0, 500) : null,
             userAgent: (req.headers.get('user-agent') || '').slice(0, 500) || null,
         };
@@ -51,11 +61,15 @@ export async function POST(req) {
         try {
             await prisma.feedback.create({ data });
         } catch (e) {
-            // A stale 30-day JWT can outlive a deleted user row → the userId FK
-            // violates (P2003). Don't 500 a guest's feedback: re-save it detached
-            // from the missing user (userId is nullable, onDelete: SetNull).
-            if (e?.code === 'P2003' && userId) {
-                await prisma.feedback.create({ data: { ...data, userId: null } });
+            // Two recoverable cases, retried once with a safe payload:
+            //  • P2022 — the `screenshot` column isn't pushed yet → save without it.
+            //  • P2003 — a stale 30-day JWT outlived a deleted user row (FK) → detach
+            //    userId (it's nullable, onDelete: SetNull) so a guest's note still saves.
+            if (e?.code === 'P2022' || e?.code === 'P2003') {
+                const fallback = { ...data };
+                if (e.code === 'P2022') delete fallback.screenshot;
+                if (e.code === 'P2003') fallback.userId = null;
+                await prisma.feedback.create({ data: fallback });
             } else {
                 throw e;
             }

@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquarePlus, X, Send, Bug, Lightbulb, Frown, Heart, MessageCircle } from 'lucide-react';
+import { MessageSquarePlus, X, Send, Bug, Lightbulb, Frown, Heart, MessageCircle, ImagePlus } from 'lucide-react';
 import { showToast } from './Toast';
 
 const CATEGORIES = [
@@ -15,6 +15,32 @@ const CATEGORIES = [
     { id: 'other', label: 'Other', icon: MessageCircle },
 ];
 
+// Downscale an image file to a small JPEG data URL so the screenshot stays well
+// under the server cap (and never bloats the DB). Caps the longest edge and
+// re-compresses; returns a data:image/jpeg;base64 string.
+async function fileToDownscaledDataUrl(file, maxEdge = 1280, quality = 0.7) {
+    const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('read failed'));
+        reader.readAsDataURL(file);
+    });
+    const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = () => reject(new Error('decode failed'));
+        i.src = dataUrl;
+    });
+    const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL('image/jpeg', quality);
+}
+
 export default function FeedbackWidget() {
     const { data: session } = useSession();
     const pathname = usePathname();
@@ -24,6 +50,9 @@ export default function FeedbackWidget() {
     const [email, setEmail] = useState('');
     const [rating, setRating] = useState(0);
     const [submitting, setSubmitting] = useState(false);
+    const [screenshot, setScreenshot] = useState(null); // data URL or null
+    const [processingImg, setProcessingImg] = useState(false);
+    const fileInputRef = useRef(null);
 
     // Don't overlap the admin tooling.
     if (pathname?.startsWith('/admin')) return null;
@@ -33,6 +62,31 @@ export default function FeedbackWidget() {
         setMessage('');
         setEmail('');
         setRating(0);
+        setScreenshot(null);
+    };
+
+    const onPickImage = async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = ''; // allow re-picking the same file
+        if (!file) return;
+        if (!file.type.startsWith('image/')) {
+            showToast('Please choose an image file.', 'error');
+            return;
+        }
+        setProcessingImg(true);
+        try {
+            const dataUrl = await fileToDownscaledDataUrl(file);
+            // Hard cap (~1.4MB of base64) so the request and DB row stay small.
+            if (dataUrl.length > 1_400_000) {
+                showToast('That image is too large even after compression. Try a crop.', 'error');
+                return;
+            }
+            setScreenshot(dataUrl);
+        } catch {
+            showToast('Could not process that image.', 'error');
+        } finally {
+            setProcessingImg(false);
+        }
     };
 
     const submit = async () => {
@@ -50,6 +104,7 @@ export default function FeedbackWidget() {
                     message,
                     rating: rating || undefined,
                     email: email || undefined,
+                    screenshot: screenshot || undefined,
                     pageUrl: typeof window !== 'undefined' ? window.location.pathname : undefined,
                 }),
             });
@@ -187,6 +242,46 @@ export default function FeedbackWidget() {
                                         ★
                                     </button>
                                 ))}
+                            </div>
+
+                            {/* Screenshot attach */}
+                            <div className="mb-5">
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={onPickImage}
+                                    className="hidden"
+                                />
+                                {screenshot ? (
+                                    <div className="relative inline-block">
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img
+                                            src={screenshot}
+                                            alt="Attached screenshot preview"
+                                            className="max-h-32 rounded-xl border"
+                                            style={{ borderColor: 'var(--dyn-glass-border)' }}
+                                        />
+                                        <button
+                                            onClick={() => setScreenshot(null)}
+                                            aria-label="Remove screenshot"
+                                            className="absolute -top-2 -right-2 rounded-full p-1 text-white shadow"
+                                            style={{ background: 'var(--dyn-accent-blue)' }}
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button
+                                        onClick={() => fileInputRef.current?.click()}
+                                        disabled={processingImg}
+                                        className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium border disabled:opacity-60"
+                                        style={{ borderColor: 'var(--dyn-glass-border)', color: 'var(--dyn-ash)' }}
+                                    >
+                                        <ImagePlus size={16} />
+                                        {processingImg ? 'Processing…' : 'Attach screenshot'}
+                                    </button>
+                                )}
                             </div>
 
                             <button

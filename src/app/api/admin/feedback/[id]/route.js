@@ -6,6 +6,24 @@ import { authOptions } from '../../../auth/[...nextauth]/route';
 
 const STATUSES = ['NEW', 'IN_PROGRESS', 'RESOLVED', 'WONTFIX'];
 
+// GET — fetch a single feedback item's screenshot on demand (kept out of the list
+// payload because the base64 can be large). Returns { screenshot: dataUrl|null }.
+export async function GET(req, { params }) {
+    const session = await getServerSession(authOptions);
+    if (session?.user?.role !== 'ADMIN') {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    }
+    try {
+        const { id } = await params;
+        const prisma = getPrisma();
+        const item = await prisma.feedback.findUnique({ where: { id }, select: { screenshot: true } });
+        return NextResponse.json({ screenshot: item?.screenshot || null });
+    } catch (error) {
+        console.error('[Admin Feedback] GET screenshot error:', error);
+        return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    }
+}
+
 // PATCH — update a feedback item's triage status and/or internal note.
 export async function PATCH(req, { params }) {
     const session = await getServerSession(authOptions);

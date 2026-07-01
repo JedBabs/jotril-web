@@ -161,6 +161,85 @@ export async function sendPasswordResetEmail(email, token, baseUrl) {
     });
 }
 
+// ── Broadcast (admin → registered users) ──────────────────────────────────
+
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+/**
+ * Renders an admin broadcast into the branded shell. `message` is plain text:
+ * blank lines become paragraphs, single newlines become <br>. HTML is escaped
+ * (admin-authored, but never inject raw markup). `footerNote` is optional and is
+ * NOT escaped (used for the unsubscribe line we add post-beta).
+ */
+export function renderBroadcastHtml({ heading, message, footerNote }) {
+    const paragraphs = String(message || '')
+        .split(/\n{2,}/)
+        .map((p) => `<p style="line-height:1.6;margin:0 0 14px;">${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
+        .join('');
+    return layout({ heading: escapeHtml(heading || 'A note from Jotril AI'), bodyHtml: paragraphs, footerNote });
+}
+
+/**
+ * Sends many individually-addressed emails (one recipient each — never a shared
+ * To/CC, which would leak the list). Uses Resend's batch endpoint (≤100/request)
+ * when configured, else falls back to sequential sendEmail (SMTP/mock). Best-effort
+ * and resilient: a failed chunk/message is counted, not thrown.
+ *
+ * @param {Array<{to:string, subject:string, html:string, text?:string}>} messages
+ * @returns {Promise<{total:number, sent:number, failed:number, errors:string[]}>}
+ */
+export async function sendBulkEmails(messages) {
+    const result = { total: messages.length, sent: 0, failed: 0, errors: [] };
+    if (messages.length === 0) return result;
+
+    // Resend batch path.
+    if (hasResend()) {
+        for (let i = 0; i < messages.length; i += 100) {
+            const chunk = messages.slice(i, i + 100);
+            try {
+                const res = await fetch('https://api.resend.com/emails/batch', {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(
+                        chunk.map((m) => ({ from: FROM, to: [m.to], subject: m.subject, html: m.html, text: m.text }))
+                    ),
+                });
+                if (!res.ok) {
+                    const body = await res.text().catch(() => '');
+                    result.failed += chunk.length;
+                    result.errors.push(`Batch ${i / 100}: ${res.status} ${body}`.slice(0, 300));
+                } else {
+                    result.sent += chunk.length;
+                }
+            } catch (e) {
+                result.failed += chunk.length;
+                result.errors.push(`Batch ${i / 100}: ${e.message}`.slice(0, 300));
+            }
+            // Gentle pacing between chunks to stay clear of provider rate limits.
+            if (i + 100 < messages.length) await new Promise((r) => setTimeout(r, 600));
+        }
+        return result;
+    }
+
+    // SMTP / mock fallback — send one at a time.
+    for (const m of messages) {
+        const ok = await sendEmail(m);
+        if (ok) result.sent += 1;
+        else { result.failed += 1; result.errors.push(`Failed: ${m.to}`); }
+    }
+    return result;
+}
+
 /**
  * Sent when a CU student email is comped Pro on email confirmation.
  * @param {Date} expiresAt - when the 2-month grant lapses.
