@@ -14,6 +14,7 @@ model User {
   emailVerified   DateTime?
   password        String? // Optional for future-proofing OAuth, required for credentials
   name            String?
+  image           String? // Profile image URL — NextAuth's Prisma adapter writes this on OAuth (Google) sign-up; without the column createUser throws and the login bounces back to sign-in
   role            String    @default("FREE") // Values: FREE, PRO, ULTRA, ADMIN
   roleExpiresAt   DateTime? // When set + in the past, the effective tier reverts to FREE (used by the 2-month beta Pro grant). Null = permanent role.
   betaTester      Boolean   @default(false) // True once a CU student email was comped Pro via the beta flow (also gates the 50-tester cap count).
