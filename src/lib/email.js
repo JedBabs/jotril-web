@@ -15,7 +15,26 @@ import nodemailer from 'nodemailer';
  * inboxes (e.g. university Google Workspace) will land in spam or bounce.
  */
 
-const FROM = process.env.EMAIL_FROM || 'Jotril AI <noreply@jotril.com>';
+const DEFAULT_FROM = 'Jotril AI <noreply@jotril.com>';
+
+/**
+ * Resolve the sender address defensively. Some env setups leave literal wrapping
+ * quotes on the value (e.g. `EMAIL_FROM="Jotril AI <x@y.com>"` → the quotes are kept),
+ * which Resend rejects with a 422 "Invalid `from` field". So strip wrapping quotes,
+ * trim, and validate against `email@domain` / `Name <email@domain>` — falling back to
+ * a known-good default if it still doesn't parse.
+ */
+function resolveFrom() {
+    let f = (process.env.EMAIL_FROM || '').trim();
+    while ((f.startsWith('"') && f.endsWith('"')) || (f.startsWith("'") && f.endsWith("'"))) {
+        f = f.slice(1, -1).trim();
+    }
+    const bare = /^[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+$/;                 // x@y.com
+    const named = /^.+<\s*[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+\s*>$/;      // Name <x@y.com>
+    return (bare.test(f) || named.test(f)) ? f : DEFAULT_FROM;
+}
+
+const FROM = resolveFrom();
 
 function hasResend() {
     return !!process.env.RESEND_API_KEY;
