@@ -67,7 +67,12 @@ export default function AdminBroadcastPage() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Test failed');
-            showToast(`Test sent to ${data.to}.`, data.sent ? 'success' : 'error');
+            if (data.sent) {
+                showToast(`Test sent to ${data.to} — check your inbox (and spam).`, 'success');
+            } else {
+                showToast(`Test failed: ${data.errors?.[0] || 'email provider rejected the send'}`, 'error');
+                setResult(data); // surface the full provider error in the panel below
+            }
         } catch (err) {
             showToast(err.message || 'Test send failed.', 'error');
         } finally {
