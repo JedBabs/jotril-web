@@ -4,6 +4,7 @@ import getPrisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '../../auth/[...nextauth]/route';
 import { BETA_MAX_TESTERS } from '@/lib/beta';
+import { sendLifecycleEmails } from '@/lib/lifecycle-emails';
 
 // Retrieve all users for the admin dash
 export async function GET(req) {
@@ -126,6 +127,15 @@ export async function PATCH(req) {
             data: updateData,
             select: { id: true, email: true, role: true, purchasedPoints: true }
         });
+
+        // If this change lands the user on Pro/Ultra, fire the one-time "you're on Pro"
+        // email (and welcome, if somehow never sent). Idempotent + best-effort.
+        try {
+            const full = await prisma.user.findUnique({ where: { id: userId } });
+            if (full) await sendLifecycleEmails(prisma, full);
+        } catch (e) {
+            console.warn('[Admin] lifecycle email failed:', e?.message);
+        }
 
         return NextResponse.json({ success: true, user: updatedUser });
     } catch (error) {

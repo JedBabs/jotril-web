@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import getPrisma from '@/lib/prisma';
 import { validateEmailVerificationToken } from '@/lib/auth-security';
 import { grantBetaProIfEligible } from '@/lib/beta';
-import { sendBetaProEmail } from '@/lib/email';
+import { sendLifecycleEmails } from '@/lib/lifecycle-emails';
 
 export async function POST(req) {
     try {
@@ -49,14 +49,21 @@ export async function POST(req) {
         let beta = { granted: false, reason: 'skipped' };
         try {
             beta = await grantBetaProIfEligible(prisma, user);
-            if (beta.granted) {
-                const baseUrl = process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL || '';
-                sendBetaProEmail(user.email, baseUrl, beta.expiresAt).catch((e) =>
-                    console.warn('[Verify Email API] beta Pro email failed', e)
-                );
-            }
+            // Fire the one-time welcome + (if now Pro) Pro emails. The user object holds
+            // the sent-flags from the pre-grant read; the grant only changed role/expiry,
+            // so reflect that here. sendLifecycleEmails claims each flag atomically → sends
+            // once. Best-effort; never blocks verification.
+            await sendLifecycleEmails(prisma, {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                role: beta.granted ? 'PRO' : user.role,
+                roleExpiresAt: beta.granted ? beta.expiresAt : user.roleExpiresAt,
+                welcomeEmailSentAt: user.welcomeEmailSentAt,
+                proEmailSentAt: user.proEmailSentAt,
+            });
         } catch (e) {
-            console.warn('[Verify Email API] beta grant failed', e);
+            console.warn('[Verify Email API] beta grant / lifecycle email failed', e);
         }
 
         return NextResponse.json({

@@ -20,6 +20,8 @@ model User {
   betaTester      Boolean   @default(false) // True once a CU student email was comped Pro via the beta flow (also gates the 50-tester cap count).
   betaGrantedAt   DateTime? // When the beta Pro grant was applied.
   purchasedPoints Int       @default(0) // Bought points that never expire
+  welcomeEmailSentAt DateTime? // Set once the one-time "welcome / congrats on joining" email is sent. Null = not yet sent.
+  proEmailSentAt     DateTime? // Set once the one-time "you're on Pro" email is sent. Null = not yet sent.
 
   apiKeys     ApiKey[]
   quotaUsages QuotaUsage[]

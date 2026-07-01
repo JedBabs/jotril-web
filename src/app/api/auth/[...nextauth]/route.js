@@ -6,7 +6,7 @@ import getPrisma from "@/lib/prisma";
 import bcrypt from "bcrypt";
 import { checkBruteForce, recordFailedLogin, clearBruteForce } from "@/lib/auth-security";
 import { effectiveRole, grantBetaProIfEligible } from "@/lib/beta";
-import { sendBetaProEmail } from "@/lib/email";
+import { sendLifecycleEmails } from "@/lib/lifecycle-emails";
 
 const prisma = getPrisma();
 
@@ -172,13 +172,13 @@ export const authOptions = {
                             const beta = await grantBetaProIfEligible(prisma, dbUser);
                             if (beta.granted) {
                                 resolved = { ...dbUser, role: 'PRO', roleExpiresAt: beta.expiresAt };
-                                const baseUrl = process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL || '';
-                                sendBetaProEmail(dbUser.email, baseUrl, beta.expiresAt).catch((e) =>
-                                    console.warn('[jwt] beta Pro email failed', e)
-                                );
                             }
+                            // One-time welcome + Pro emails on sign-in. Cheap no-op once both
+                            // flags are set, so it also backfills any existing user who never
+                            // got them the first time they next log in. Best-effort.
+                            await sendLifecycleEmails(prisma, resolved);
                         } catch (e) {
-                            console.warn('[jwt] beta grant failed', e);
+                            console.warn('[jwt] beta grant / lifecycle email failed', e);
                         }
                     }
                     token.role = resolved?.role || user.role || 'FREE';

@@ -260,25 +260,51 @@ export async function sendBulkEmails(messages) {
 }
 
 /**
- * Sent when a CU student email is comped Pro on email confirmation.
- * @param {Date} expiresAt - when the 2-month grant lapses.
+ * One-time "welcome / congrats on joining" email — sent once per user (see
+ * lib/lifecycle-emails.js). Best-effort; returns true/false.
  */
-export async function sendBetaProEmail(email, baseUrl, expiresAt) {
+export async function sendWelcomeEmail(email, name, baseUrl) {
+    const hi = name && typeof name === 'string' ? name.split(' ')[0] : 'there';
+    const dash = `${baseUrl || ''}/dashboard`;
+    return sendEmail({
+        to: email,
+        subject: '🎉 Welcome to Jotril AI',
+        text: `Welcome to Jotril AI, ${hi}! Your account is ready. Start scanning: ${dash}`,
+        html: layout({
+            heading: `Welcome aboard, ${escapeHtml(hi)} 🎉`,
+            bodyHtml: `
+              <p style="line-height:1.6;margin:0 0 8px;">Thanks for joining <strong>Jotril AI</strong> — you&rsquo;re all set. Paste text or upload a PDF/DOCX and get a sentence-level breakdown of what reads human vs. AI, plus a clean PDF report.</p>
+              <p style="line-height:1.6;margin:0;color:#475569;">You&rsquo;re part of our private beta, so your feedback genuinely shapes the product — use the <strong>Feedback</strong> button in the app to tell us anything.</p>
+              ${button(dash, 'Open your dashboard')}`,
+        }),
+    });
+}
+
+/**
+ * One-time "you're on Pro" email — sent once per user when they reach a Pro/Ultra
+ * tier (see lib/lifecycle-emails.js). When `expiresAt` is set (the time-limited CU
+ * beta grant) the copy reflects the 2-month window; otherwise it's a plain Pro welcome.
+ * Best-effort; returns true/false.
+ */
+export async function sendProEmail(email, baseUrl, expiresAt) {
     const expiry = expiresAt
         ? new Date(expiresAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
         : null;
+    const dash = `${baseUrl || ''}/dashboard`;
     return sendEmail({
         to: email,
-        subject: '🎉 Your Jotril AI Pro beta access is live',
-        text: `Your email is confirmed and Jotril AI Pro is now active for 2 months${expiry ? ` (until ${expiry})` : ''}. Start scanning: ${baseUrl}/dashboard`,
+        subject: '🎉 Jotril AI Pro is now active',
+        text: `Jotril AI Pro is now active on your account${expiry ? ` for 2 months (until ${expiry})` : ''}. Start scanning: ${dash}`,
         html: layout({
             heading: 'Pro is active — welcome aboard 🎉',
             bodyHtml: `
-              <p style="line-height:1.6;margin:0 0 8px;">Your email is confirmed and your <strong>Jotril AI Pro</strong> beta access is now live${expiry ? ` until <strong>${expiry}</strong>` : ' for the next 2 months'} — completely free, no card required.</p>
+              <p style="line-height:1.6;margin:0 0 8px;">Your <strong>Jotril AI Pro</strong> access is now live${expiry ? ` until <strong>${expiry}</strong> — completely free, no card required` : ''}.</p>
               <p style="line-height:1.6;margin:0;color:#475569;">Pro gives you higher daily limits, larger document uploads, and the full-depth detection engine.</p>
-              ${button(`${baseUrl}/dashboard`, 'Open your dashboard')}
-              <p style="font-size:14px;line-height:1.6;color:#475569;margin:20px 0 0;">You're one of our first 50 testers — please tell us what's broken or confusing using the <strong>Feedback</strong> button in the app. Every report helps.</p>`,
-            footerNote: 'After the 2-month beta period your account reverts to the Free tier automatically. No charges, ever, unless you choose to upgrade.',
+              ${button(dash, 'Open your dashboard')}
+              ${expiry ? `<p style="font-size:14px;line-height:1.6;color:#475569;margin:20px 0 0;">You're one of our first 50 testers — please tell us what's broken or confusing using the <strong>Feedback</strong> button in the app. Every report helps.</p>` : ''}`,
+            footerNote: expiry
+                ? 'After the 2-month beta period your account reverts to the Free tier automatically. No charges, ever, unless you choose to upgrade.'
+                : undefined,
         }),
     });
 }

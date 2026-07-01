@@ -47,6 +47,36 @@ export default function AdminBroadcastPage() {
         else if (authStatus === 'authenticated') loadCounts();
     }, [authStatus, loadCounts, router]);
 
+    const [backfilling, setBackfilling] = useState(false);
+    const [backfillMsg, setBackfillMsg] = useState('');
+
+    // Send any *pending* one-time welcome / Pro emails to existing users. Idempotent —
+    // each user only ever gets each email once. Drains in batches (the endpoint caps
+    // per call to fit the function timeout).
+    const runBackfill = async () => {
+        if (!confirm('Send any pending welcome / Pro emails to existing users?\n\nEach user only ever receives each email once — safe to run.')) return;
+        setBackfilling(true);
+        setBackfillMsg('Working…');
+        let totalW = 0, totalP = 0, processed = 0;
+        try {
+            for (let i = 0; i < 50; i++) {
+                const res = await fetch('/api/admin/backfill-emails', { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Backfill failed');
+                totalW += data.welcomeSent || 0;
+                totalP += data.proSent || 0;
+                processed += data.processed || 0;
+                setBackfillMsg(`Sent ${totalW} welcome + ${totalP} Pro so far (${processed} checked)…`);
+                if (!data.more) break;
+            }
+            setBackfillMsg(`Done — ${totalW} welcome and ${totalP} Pro emails sent to existing users.`);
+        } catch (e) {
+            setBackfillMsg(e.message || 'Backfill failed.');
+        } finally {
+            setBackfilling(false);
+        }
+    };
+
     const recipientCount = counts ? counts[audience] ?? 0 : null;
 
     const validate = () => {
@@ -260,6 +290,30 @@ export default function AdminBroadcastPage() {
                             Tip: send a test to yourself first to confirm formatting and that it lands in the inbox (not spam).
                         </p>
                     </div>
+                </div>
+
+                {/* One-time lifecycle-email backfill for existing users */}
+                <div className="mt-8 rounded-2xl border p-5" style={{ borderColor: 'var(--dyn-glass-border)', background: 'var(--dyn-glass-bg)' }}>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <h3 className="text-sm font-bold" style={{ color: 'var(--dyn-text-navy)' }}>Backfill welcome / Pro emails</h3>
+                            <p className="text-xs mt-1" style={{ color: 'var(--dyn-ash)' }}>
+                                Sends the one-time welcome (and &ldquo;you&rsquo;re on Pro&rdquo;) email to existing users who never got it. Each user only ever receives each once — safe to run anytime.
+                            </p>
+                        </div>
+                        <button
+                            onClick={runBackfill}
+                            disabled={backfilling}
+                            className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold border disabled:opacity-50 shrink-0"
+                            style={{ borderColor: 'var(--dyn-glass-border)', color: 'var(--dyn-accent-blue)' }}
+                        >
+                            {backfilling ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                            {backfilling ? 'Sending…' : 'Run backfill'}
+                        </button>
+                    </div>
+                    {backfillMsg && (
+                        <p className="mt-3 text-xs font-semibold" style={{ color: 'var(--dyn-accent-blue)' }}>{backfillMsg}</p>
+                    )}
                 </div>
             </div>
         </div>
