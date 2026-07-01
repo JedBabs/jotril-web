@@ -288,6 +288,11 @@ export default function SignInPage() {
                                 </svg>
                                 Continue with Google
                             </button>
+                            <p className="mt-3 text-center text-[11px] leading-relaxed text-ash">
+                                By continuing with Google, you agree to our{' '}
+                                <a href="/legal/terms" target="_blank" className="text-accent-blue font-semibold hover:underline">Terms</a>{' '}and{' '}
+                                <a href="/legal/privacy" target="_blank" className="text-accent-blue font-semibold hover:underline">Privacy Policy</a>.
+                            </p>
                         </motion.div>
 
                         {/* Developer Mode Toggle */}
