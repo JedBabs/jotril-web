@@ -133,21 +133,52 @@ const frameFns = [
 const NORMAL_FN = frameFns[0];
 const GLITCH_FNS = frameFns.slice(1);
 
-// Persistent favicon link — find or create once, only ever update href.
-// NEVER removeChild — that conflicts with React's DOM reconciler.
-let _faviconLink = null;
+// Point EVERY favicon at the current frame so we never have to win a priority war.
+// Next.js auto-injects icon links from app/favicon.ico AND app/icon.svg, and Chrome
+// PREFERS the SVG — so updating our own appended <link> alone was invisible (the
+// browser kept showing the static SVG). Instead we set the same data URL on all icon
+// links and strip `type`/`sizes` (so the SVG is no longer preferred and a data: URL
+// isn't skipped). We only MUTATE attributes — never removeChild — because removing a
+// Next-managed <head> node crashes the App Router reconciler (that broke navigation).
+// Idempotent: re-running never creates or accumulates nodes.
+let _ownLink = null;
+
+function makeOwnLink(dataUrl) {
+    const link = document.createElement("link");
+    link.rel = "icon";
+    link.type = "image/png";
+    link.setAttribute("data-glitch-favicon", "true");
+    link.href = dataUrl;
+    return link;
+}
+
 function setFavicon(dataUrl) {
-    if (!_faviconLink) {
-        _faviconLink = document.querySelector('link[data-glitch-favicon]');
-        if (!_faviconLink) {
-            _faviconLink = document.createElement("link");
-            _faviconLink.rel = "icon";
-            _faviconLink.type = "image/png";
-            _faviconLink.setAttribute("data-glitch-favicon", "true");
-            document.head.appendChild(_faviconLink);
-        }
+    // 1) Point every browser-managed icon link (Next auto-injects one from favicon.ico
+    //    and one from icon.svg) at the same frame. Chrome/Firefox repaint on an href
+    //    change, so whichever they prefer shows the glitch — precedence is moot. Strip
+    //    `type`/`sizes` so the SVG isn't preferred and a data: URL isn't skipped.
+    //    Attribute-only — we NEVER remove these Next-managed nodes (that broke nav).
+    document.querySelectorAll('link[rel~="icon"], link[rel="shortcut icon"]').forEach((l) => {
+        if (l.hasAttribute("data-glitch-favicon")) return;
+        l.setAttribute("href", dataUrl);
+        l.removeAttribute("type");
+        l.removeAttribute("sizes");
+    });
+
+    // 2) Our OWN link: REPLACE the node each frame (remove old + insert fresh) instead of
+    //    mutating its href. Chrome/FF don't need this, but Safari only repaints the favicon
+    //    when the <link> element itself is re-inserted. Safe because this node is created by
+    //    us imperatively — React/Next never tracks it, so swapping it can't crash the
+    //    reconciler (that's the distinction that broke navigation with the old observer).
+    const fresh = makeOwnLink(dataUrl);
+    if (_ownLink && _ownLink.isConnected) {
+        _ownLink.replaceWith(fresh);
+    } else {
+        // First run (or our link went missing): clear any stray glitch links, then append.
+        document.querySelectorAll("link[data-glitch-favicon]").forEach((l) => l.remove());
+        document.head.appendChild(fresh);
     }
-    _faviconLink.href = dataUrl;
+    _ownLink = fresh;
 }
 
 export default function GlitchFavicon() {
