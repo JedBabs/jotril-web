@@ -5,12 +5,14 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '../../auth/[...nextauth]/route';
 import { renderBroadcastHtml, sendBulkEmails } from '@/lib/email';
 
-// Audience → Prisma where clause. Every audience requires a non-null email.
+// Audience → Prisma where clause. User.email is a required column, so every user
+// already has one — no `email: { not: null }` filter (Prisma rejects `not: null`
+// on a non-nullable field). emailVerified IS nullable, so it can use `not: null`.
 const AUDIENCES = {
-    all: { email: { not: null } },
-    verified: { email: { not: null }, emailVerified: { not: null } },
-    beta: { email: { not: null }, betaTester: true },
-    pro: { email: { not: null }, role: { in: ['PRO', 'ULTRA'] } },
+    all: {},
+    verified: { emailVerified: { not: null } },
+    beta: { betaTester: true },
+    pro: { role: { in: ['PRO', 'ULTRA'] } },
 };
 
 const MAX_SUBJECT = 200;
@@ -30,13 +32,18 @@ export async function GET() {
 
     try {
         const prisma = getPrisma();
-        const [all, verified, beta, pro] = await Promise.all([
-            prisma.user.count({ where: AUDIENCES.all }),
-            prisma.user.count({ where: AUDIENCES.verified }),
-            prisma.user.count({ where: AUDIENCES.beta }),
-            prisma.user.count({ where: AUDIENCES.pro }),
-        ]);
-        return NextResponse.json({ counts: { all, verified, beta, pro }, adminEmail: session.user.email || null });
+        // Resilient: a failing audience (e.g. a not-yet-pushed column) yields 0 for that
+        // one rather than blanking the whole tool.
+        const keys = ['all', 'verified', 'beta', 'pro'];
+        const settled = await Promise.allSettled(
+            keys.map((k) => prisma.user.count({ where: AUDIENCES[k] }))
+        );
+        const counts = {};
+        settled.forEach((r, i) => {
+            counts[keys[i]] = r.status === 'fulfilled' ? r.value : 0;
+            if (r.status === 'rejected') console.error(`[Admin Broadcast] count ${keys[i]} failed:`, r.reason?.message);
+        });
+        return NextResponse.json({ counts, adminEmail: session.user.email || null });
     } catch (error) {
         console.error('[Admin Broadcast] GET error:', error);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
