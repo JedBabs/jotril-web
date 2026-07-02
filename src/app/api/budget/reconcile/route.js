@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { reconcileScan } from '@/lib/budget-governor';
+import { verifyBudgetToken } from '@/lib/scan-token';
 
 /**
  * Releases the unused portion of a budget reservation when a scan is ABANDONED before
@@ -9,10 +10,10 @@ import { reconcileScan } from '@/lib/budget-governor';
  * cost. If the scan never reaches /api/attribute, that reservation would otherwise leak
  * and slowly inflate UsageBudget.used (prematurely throttling analysis depth).
  *
- * Same trust model as /api/attribute's reconcile (both are unauthenticated and adjust the
- * shared monthly counter — not a security boundary; the expensive proxy is gated by the
- * scan token). Values are clamped so a single call can't move the counter by an absurd
- * amount. reconcileScan itself is two-directional and biased safe.
+ * The reservation basis (estimate/monthKey) is carried in the server-signed budgetToken
+ * issued by /api/analyze, so a client can't forge it to move the shared counter. Only
+ * actualInvocations is client-supplied, and it's clamped so a single call can't move the
+ * counter by an absurd amount. reconcileScan itself is two-directional and biased safe.
  */
 const MAX_DELTA = 100_000; // far above any single scan's real invocation count
 
@@ -23,15 +24,16 @@ function clampNonNeg(v) {
 
 export async function POST(req) {
     try {
-        const { monthKey, estimate, actualInvocations } = await req.json().catch(() => ({}));
+        const { budgetToken, actualInvocations } = await req.json().catch(() => ({}));
 
-        if (typeof monthKey !== 'string' || !/^\d{4}-\d{2}$/.test(monthKey) || typeof estimate !== 'number') {
-            return NextResponse.json({ error: 'monthKey and estimate are required' }, { status: 400 });
+        const budget = await verifyBudgetToken(budgetToken);
+        if (!budget || typeof budget.monthKey !== 'string' || !/^\d{4}-\d{2}$/.test(budget.monthKey) || typeof budget.estimate !== 'number') {
+            return NextResponse.json({ error: 'A valid budget token is required' }, { status: 400 });
         }
 
         await reconcileScan({
-            monthKey,
-            estimate: clampNonNeg(estimate),
+            monthKey: budget.monthKey,
+            estimate: clampNonNeg(budget.estimate),
             actualInvocations: clampNonNeg(actualInvocations),
         });
 

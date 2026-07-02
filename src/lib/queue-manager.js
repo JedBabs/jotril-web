@@ -16,7 +16,12 @@ class JotrilQueueManager {
             // Distribution is even (chunkIndex % SPACES.length) → ~PER_SPACE_CONCURRENCY each.
             // The auto-sweeper downscales MAX_CONCURRENCY on drops as the safety valve.
             this.PER_SPACE_CONCURRENCY = 30;
-            this.MAX_CONCURRENCY = this.PER_SPACE_CONCURRENCY * SPACES.length; // 30 × 2 = 60
+            this.MAX_CONCURRENCY = this.PER_SPACE_CONCURRENCY * SPACES.length; // 30 × SPACES.length
+            // Sweeper-learned concurrency ceiling, persisted ACROSS jobs. Previously
+            // every enqueue reset MAX_CONCURRENCY to the full pool, so each new scan
+            // re-discovered the safe level by failing/downscaling all over again.
+            // Downscaled on sweeper engagement; recovers ×1.25 after each clean job.
+            this._learnedCap = this.MAX_CONCURRENCY;
             this.listeners = new Set();
             this.telemetry = {
                 processedChunks: 0,
@@ -137,7 +142,9 @@ class JotrilQueueManager {
      * higher per-chunk success.
      */
     _adaptConcurrencyToNetwork() {
-        const base = this.PER_SPACE_CONCURRENCY * SPACES.length;
+        // Cap by what the sweeper has learned the Spaces can actually sustain —
+        // don't reset to the full pool and re-learn the limit by failing.
+        const base = Math.min(this.PER_SPACE_CONCURRENCY * SPACES.length, this._learnedCap);
         if (typeof navigator === 'undefined') { this.MAX_CONCURRENCY = base; return; }
         const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
         const eff = conn?.effectiveType;
@@ -278,6 +285,10 @@ class JotrilQueueManager {
                     this.telemetry.sweeperRetries += droppedIndices.length;
                     this.telemetry.sweeperEngagements += 1;
                     this.MAX_CONCURRENCY = Math.max(10, Math.floor(this.MAX_CONCURRENCY / 1.5));
+                    // Remember the downscale for FUTURE jobs too, and mark this job so
+                    // its completion doesn't count as "clean" for the recovery bump.
+                    this._learnedCap = this.MAX_CONCURRENCY;
+                    parentJob.swept = true;
 
                     console.warn(`[Auto-Sweeper] Recovering ${droppedIndices.length} dropped chunks. Downscaling concurrency to: ${this.MAX_CONCURRENCY}`);
 
@@ -292,6 +303,14 @@ class JotrilQueueManager {
                     this.queue.unshift(...recoverJobs);
                     this._notify();
                     continue; // Loop organically picks up re-injected chunks
+                }
+
+                // Clean completion (no sweeper engagement) — let the learned ceiling
+                // recover gradually toward the full pool. ×1.25 per clean job vs ÷1.5
+                // per engagement keeps the cap biased toward what actually works.
+                if (!parentJob.swept) {
+                    const fullPool = this.PER_SPACE_CONCURRENCY * SPACES.length;
+                    this._learnedCap = Math.min(fullPool, Math.ceil(this._learnedCap * 1.25));
                 }
 
                 // All chunks complete — fire callback with the true proxy-call tally so the

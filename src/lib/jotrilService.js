@@ -46,7 +46,33 @@ export const proxyStats = { calls: 0 };
 // own). The bound is longer than a worst-case cold-start poll but shorter
 // than the queue's overall job-level retry budget, so one dead request can't
 // condemn a chunk on a flaky link.
+// NOTE: since the proxy now STREAMS, fetch() resolves as soon as headers arrive
+// (fast), so this bounds connection setup — the long part is reading the SSE
+// body, bounded separately by POLL_STREAM_TIMEOUT_MS below.
 const PROXY_REQUEST_TIMEOUT_MS = 30000;
+
+// Ceiling for reading a poll's SSE stream. Under load a queued event legitimately
+// takes a minute+ on a free CPU Space — killing the wait early and RESUBMITTING on
+// another Space (the old 30s behavior) just amplified the load into a retry storm.
+// Wait out the queue; only a genuinely wedged stream (past the Edge proxy's own
+// ~120s proxied-request ceiling) is abandoned.
+const POLL_STREAM_TIMEOUT_MS = 110000;
+
+/** Read a Response body as text, aborting (and cancelling the stream) after timeoutMs. */
+async function readBodyWithTimeout(res, timeoutMs) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            try { res.body?.cancel(); } catch { /* already closed */ }
+            reject(new DOMException('Poll stream timed out', 'TimeoutError'));
+        }, timeoutMs);
+    });
+    try {
+        return await Promise.race([res.text(), timeout]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
 async function fetchWithTimeout(url, options, timeoutMs) {
     const ctrl = new AbortController();
@@ -188,7 +214,9 @@ export async function queryJotrilModel(text, spaceName = SPACES[0], opts = {}) {
                     throw new Error(`Proxy Polling Exception: Code ${statusRes.status}`);
                 }
 
-                const rawText = await statusRes.text();
+                // The proxy streams the SSE body: this read blocks (heartbeats flowing)
+                // until Gradio completes the event or POLL_STREAM_TIMEOUT_MS elapses.
+                const rawText = await readBodyWithTimeout(statusRes, POLL_STREAM_TIMEOUT_MS);
 
                 // Gradio's /gradio_api/call/<api>/<event_id> endpoint streams SSE as
                 // alternating "event: <type>" / "data: <json>" line pairs. The payload

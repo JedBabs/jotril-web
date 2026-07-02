@@ -5,6 +5,11 @@ import { signIn, useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 
+// Dev-admin PIN login is a LOCAL-DEV-ONLY convenience. NODE_ENV is inlined into the
+// client bundle at build time, so in a production build this is `false` and the whole
+// developer-access UI is dropped — visitors never see that a dev path exists.
+const DEV_LOGIN_ENABLED = process.env.NODE_ENV !== 'production';
+
 export default function SignInPage() {
     const router = useRouter();
     const { data: session, status } = useSession();
@@ -295,19 +300,21 @@ export default function SignInPage() {
                             </p>
                         </motion.div>
 
-                        {/* Developer Mode Toggle */}
-                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }} className="mt-4 text-center">
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setIsDevMode(!isDevMode);
-                                    setError('');
-                                }}
-                                className="text-xs text-ash hover:text-navy transition-colors opacity-50 hover:opacity-100"
-                            >
-                                {isDevMode ? 'Back to regular login' : 'Developer Access'}
-                            </button>
-                        </motion.div>
+                        {/* Developer Mode Toggle — local dev only, never rendered in production */}
+                        {DEV_LOGIN_ENABLED && (
+                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }} className="mt-4 text-center">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setIsDevMode(!isDevMode);
+                                        setError('');
+                                    }}
+                                    className="text-xs text-ash hover:text-navy transition-colors opacity-50 hover:opacity-100"
+                                >
+                                    {isDevMode ? 'Back to regular login' : 'Developer Access'}
+                                </button>
+                            </motion.div>
+                        )}
                     </form>
                 </div>
             </motion.div>

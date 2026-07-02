@@ -56,32 +56,34 @@ export const authOptions = {
             },
             async authorize(credentials, req) {
                 if (credentials?.devPin) {
-                    // We use an environment variable for the dev pin. If not set, default to a secure fallback or just reject.
-                    const expectedPin = process.env.DEV_PIN || 'antigravity-debug';
-                    if (credentials.devPin === expectedPin) {
-                        // Ensure a real DB user exists for dev-admin so FK constraints work
-                        const devPrisma = getPrisma();
-                        await devPrisma.user.upsert({
-                            where: { id: 'dev-admin-id' },
-                            update: {},
-                            create: {
-                                id: 'dev-admin-id',
-                                name: 'Dev Admin',
-                                email: 'dev@antigravity.local',
-                                role: 'ADMIN',
-                                emailVerified: new Date(),
-                            }
-                        });
-                        return {
+                    // Dev-admin PIN login is a LOCAL-DEV-ONLY convenience. It is hard-disabled
+                    // in production (no admin backdoor in the deployed app) and requires DEV_PIN
+                    // to be set explicitly — there is deliberately no hardcoded fallback. The error
+                    // message stays generic so the deployed app never confirms a dev path exists.
+                    const devLoginEnabled = process.env.NODE_ENV !== 'production' && !!process.env.DEV_PIN;
+                    if (!devLoginEnabled || credentials.devPin !== process.env.DEV_PIN) {
+                        throw new Error(JSON.stringify({ message: "Invalid credentials" }));
+                    }
+                    // Ensure a real DB user exists for dev-admin so FK constraints work
+                    const devPrisma = getPrisma();
+                    await devPrisma.user.upsert({
+                        where: { id: 'dev-admin-id' },
+                        update: {},
+                        create: {
                             id: 'dev-admin-id',
                             name: 'Dev Admin',
                             email: 'dev@antigravity.local',
                             role: 'ADMIN',
-                            isDev: true
-                        };
-                    } else {
-                        throw new Error(JSON.stringify({ message: "Invalid Dev PIN" }));
-                    }
+                            emailVerified: new Date(),
+                        }
+                    });
+                    return {
+                        id: 'dev-admin-id',
+                        name: 'Dev Admin',
+                        email: 'dev@antigravity.local',
+                        role: 'ADMIN',
+                        isDev: true
+                    };
                 }
 
                 if (!credentials?.email || !credentials?.password) {

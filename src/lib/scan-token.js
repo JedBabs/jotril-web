@@ -64,6 +64,49 @@ export async function signScanToken(ttlMs = DEFAULT_TTL_MS) {
 }
 
 /**
+ * Signs an arbitrary small JSON payload as `<payloadB64>.<sig>`, stamping an `exp`.
+ * Used to seal server-computed budget bookkeeping (estimate / monthKey / callsPerQuery)
+ * so it can round-trip through the client to /api/attribute + /api/budget/reconcile
+ * WITHOUT being human-readable on the wire OR forgeable by the client. Returns null if
+ * no secret is configured (callers treat null as "reconciliation disabled").
+ */
+export async function signBudgetToken(data, ttlMs = DEFAULT_TTL_MS) {
+    const secret = getSecret();
+    if (!secret) return null;
+    const payload = strToB64Url(JSON.stringify({ ...data, exp: Date.now() + ttlMs }));
+    const sig = await hmacSha256(payload, secret);
+    return `${payload}.${sig}`;
+}
+
+/**
+ * Verifies a budget token and returns its decoded payload object when the signature is
+ * valid AND unexpired; otherwise null. Callers must treat null as "no trustworthy budget
+ * data" (skip reconciliation / reject) — never fall back to client-supplied values.
+ */
+export async function verifyBudgetToken(token) {
+    const secret = getSecret();
+    if (!secret) return null;
+    if (!token || typeof token !== 'string' || !token.includes('.')) return null;
+
+    const [payloadB64, sig] = token.split('.');
+    if (!payloadB64 || !sig) return null;
+
+    const expected = await hmacSha256(payloadB64, secret);
+    if (!timingSafeEqual(sig, expected)) return null;
+
+    try {
+        const bin = atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/'));
+        const json = JSON.parse(decodeURIComponent(
+            Array.from(bin).map((c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join(''),
+        ));
+        if (typeof json.exp !== 'number' || json.exp <= Date.now()) return null;
+        return json;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Verifies a scan token. Returns true when the signature is valid AND unexpired.
  * When no secret is configured, returns true (fail-open — see signScanToken).
  */

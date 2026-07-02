@@ -8,6 +8,7 @@ import {
     classifyResults,
 } from '@/lib/chunking';
 import { reconcileScan } from '@/lib/budget-governor';
+import { verifyBudgetToken } from '@/lib/scan-token';
 
 /**
  * Live-path attribution endpoint. Receives the per-window AI probabilities gathered
@@ -20,7 +21,7 @@ import { reconcileScan } from '@/lib/budget-governor';
 export async function POST(req) {
     try {
         const body = await req.json();
-        const { sentences, scenarios, scores, estimate, monthKey, callsPerQuery, executedQueries, actualInvocations } = body;
+        const { sentences, scenarios, scores, budgetToken, executedQueries, actualInvocations } = body;
 
         if (!Array.isArray(sentences) || !Array.isArray(scenarios) || !Array.isArray(scores)) {
             return NextResponse.json({ error: "Missing sentences / scenarios / scores arrays" }, { status: 400 });
@@ -56,15 +57,19 @@ export async function POST(req) {
         const chunksWithPara = chunks.map((c, i) => ({ ...c, para: paraOf[i] ?? 0 }));
 
         // Reconcile the reservation against the REAL invocation cost now that the scan is
-        // done. Prefer the queue's honest proxy-call tally (submit + every poll + every
-        // retry); only fall back to the submit+poll estimate for older clients that don't
-        // send it. reconcileScan now also CHARGES an overage (retry-heavy scans can exceed
-        // the reservation), so the budget can't silently drift under sustained failures.
-        if (monthKey && estimate) {
+        // done. The reservation basis (estimate/monthKey/callsPerQuery) comes from the
+        // server-signed budgetToken — NOT from client-supplied fields — so it can't be
+        // forged to skew the shared ledger. Prefer the queue's honest proxy-call tally
+        // (submit + every poll + every retry); fall back to the submit+poll estimate.
+        // reconcileScan also CHARGES an overage (retry-heavy scans can exceed the
+        // reservation), so the budget can't silently drift under sustained failures.
+        const budget = await verifyBudgetToken(budgetToken);
+        if (budget && budget.monthKey && typeof budget.estimate === 'number') {
+            const callsPerQuery = budget.callsPerQuery || 2;
             const real = (typeof actualInvocations === 'number' && actualInvocations >= 0)
                 ? actualInvocations
-                : (typeof executedQueries === 'number' ? executedQueries : scenarios.length) * (callsPerQuery || 2);
-            await reconcileScan({ monthKey, estimate, actualInvocations: real });
+                : (typeof executedQueries === 'number' ? executedQueries : scenarios.length) * callsPerQuery;
+            await reconcileScan({ monthKey: budget.monthKey, estimate: budget.estimate, actualInvocations: real });
         }
 
         return NextResponse.json({ chunks: chunksWithPara, breakdown, overallLabel });

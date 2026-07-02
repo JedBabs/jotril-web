@@ -64,11 +64,17 @@ export async function POST(req) {
         }
         const hfResponse = await fetch(targetUrl, options);
 
-        // Fetch exact output payload
+        // STREAM the upstream body — do NOT buffer it (`await hfResponse.text()`).
+        // Gradio's poll endpoint is a long-held SSE stream that only closes once the
+        // Space's queue reaches the event; buffering meant this function sent NOTHING
+        // until then, and Vercel kills an Edge Function that hasn't started responding
+        // within ~25s. Under scan load (deep Space queues) every tail-chunk poll blew
+        // that limit → 504 → client resubmitted on another Space → retry storm.
+        // Streaming forwards the headers + heartbeats immediately; the client's
+        // .text() simply resolves when the stream ends, as before.
         const contentType = hfResponse.headers.get('content-type') || 'text/plain';
-        const responseData = await hfResponse.text();
 
-        return new Response(responseData, {
+        return new Response(hfResponse.body, {
             status: hfResponse.status,
             headers: {
                 'Content-Type': contentType,

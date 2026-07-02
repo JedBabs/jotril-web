@@ -417,7 +417,7 @@ export default function EnhancedAccountPortal() {
                                                             const controller = new AbortController();
                                                             openProcess("download", "Generating Report PDF", "Fetching analysis data...", () => controller.abort());
                                                             simulateProgress([
-                                                                { progress: 20, duration: 200, step: "Retrieving chunks from database..." },
+                                                                { progress: 20, duration: 200, step: "Retrieving your analysis..." },
                                                                 { progress: 50, duration: 400, step: "Extracting semantic tokens..." },
                                                                 { progress: 80, duration: 300, step: "Executing predictive layers..." }
                                                             ]);

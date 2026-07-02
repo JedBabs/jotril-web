@@ -79,8 +79,8 @@ export default function QueueSidebar() {
 
                                 <div className="space-y-1.5">
                                     <div className="flex justify-between text-[10px] font-bold text-ash tracking-widest">
-                                        <span>{Math.round(progress)}% COMPLETED</span>
-                                        <span>CHUNKS: {job.completed}/{job.total}</span>
+                                        <span>ANALYZING</span>
+                                        <span>{Math.round(progress)}% COMPLETE</span>
                                     </div>
                                     <div className="w-full bg-silver/30 rounded-full h-1.5 overflow-hidden">
                                         <motion.div

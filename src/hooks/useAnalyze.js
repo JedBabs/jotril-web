@@ -36,13 +36,13 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
      */
     const reconcileBudget = useCallback((actualInvocations = 0) => {
         const b = budgetRef.current;
-        if (!b || !b.monthKey || typeof b.estimate !== 'number') return;
+        if (!b || !b.budgetToken) return;
         budgetRef.current = null;
         try {
             fetch('/api/budget/reconcile', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ monthKey: b.monthKey, estimate: b.estimate, actualInvocations }),
+                body: JSON.stringify({ budgetToken: b.budgetToken, actualInvocations }),
                 keepalive: true,
             }).catch(() => { /* best-effort — the server pool is authoritative */ });
         } catch { /* ignore */ }
@@ -226,19 +226,22 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
             }
 
             const data = await res.json();
-            const { scenarios, sentences, sourceHtml: html, chunkCount, depth, estimate, monthKey, callsPerQuery } = data;
+            const { scenarios, sentences, sourceHtml: html, chunkCount, budgetToken } = data;
 
             // Record the reservation the server just made so it can be released if this
-            // scan is abandoned before /api/attribute reconciles it.
-            if (monthKey && typeof estimate === 'number') {
-                budgetRef.current = { estimate, monthKey };
+            // scan is abandoned before /api/attribute reconciles it. The reservation
+            // details are sealed in budgetToken (opaque to us) — we only pass it back.
+            if (budgetToken) {
+                budgetRef.current = { budgetToken };
             }
 
             // The full engine queries multi-scale WINDOWS (scenarios), not raw sentences.
             // uniqueTexts are already deduped server-side (scenarios carry unique texts).
             const uniqueTexts = scenarios.map(s => s.text);
 
-            updateProcess(10, `Queueing ${chunkCount} windows (${depth} depth)...`);
+            // User-facing copy stays generic — it must not reveal the multi-scale
+            // window count or the governor's depth tier (internal architecture).
+            updateProcess(10, `Analyzing ${sentences?.length ?? ''} sentences...`.replace('  ', ' '));
 
             // ETA Optimization logic
             const timePerChunk = 1000; // Match QueueManager.safeSwitchTPS statically
@@ -285,7 +288,7 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
                     const attrRes = await resilientFetch("/api/attribute", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ sentences, scenarios, scores, estimate, monthKey, callsPerQuery, executedQueries, actualInvocations }),
+                        body: JSON.stringify({ sentences, scenarios, scores, budgetToken, executedQueries, actualInvocations }),
                         signal,
                         retry: true,
                         timeoutMs: 30000,
@@ -321,7 +324,7 @@ export function useAnalyze({ deviceHash, onAfterComplete } = {}) {
         } catch (error) {
             if (cancelledRef.current || error?.name === "AbortError") return; // user cancelled
             console.error(error);
-            showToast("Networking Failure fetching pipeline chunks.", "error");
+            showToast("Network error during analysis. Please try again.", "error");
             closeProcess();
         }
     }, [openProcess, updateProcess, closeProcess, deviceHash, processFinalResults, cancelAnalysis, reconcileBudget]);

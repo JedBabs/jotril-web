@@ -4,7 +4,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '../auth/[...nextauth]/route';
 import { extractTextFromDocument, extractHtmlFromDocument, htmlToProseText } from '@/lib/file-parser';
 import { resolveScan } from '@/lib/budget-governor';
-import { signScanToken, SCAN_TOKEN_COOKIE } from '@/lib/scan-token';
+import { signScanToken, signBudgetToken, SCAN_TOKEN_COOKIE } from '@/lib/scan-token';
 import {
     hashFingerprint, hashText, estimateCost, checkCache, checkQuota,
     recordQuotaUsage, hashIp, checkIpFloodGate, recordIpRequest,
@@ -107,6 +107,17 @@ export async function POST(req) {
             if (!isAuthed) await recordIpRequest(charge.ipHash, text.length);
         }
 
+        // Seal the budget bookkeeping in an HMAC token instead of returning it as plain
+        // fields. It round-trips through the client back to /api/attribute and
+        // /api/budget/reconcile, which decode it server-side. Two wins: (1) governor
+        // internals (depth/estimate/monthKey/callsPerQuery) never appear on the wire, and
+        // (2) the client can no longer forge reconciliation values against the shared ledger.
+        const budgetToken = await signBudgetToken({
+            estimate: plan.estimate,
+            monthKey: plan.monthKey,
+            callsPerQuery: plan.callsPerQuery,
+        });
+
         const response = NextResponse.json({
             // The multi-scale windows the client must query (full text retained — the
             // client derives uniqueTexts = scenarios.map(s => s.text) and the attribution
@@ -116,11 +127,7 @@ export async function POST(req) {
             sourceHtml,
             filename: fileName,
             chunkCount: plan.scenarios.length,
-            // Budget bookkeeping — round-tripped back to /api/attribute for reconciliation.
-            depth: plan.depth,
-            estimate: plan.estimate,
-            monthKey: plan.monthKey,
-            callsPerQuery: plan.callsPerQuery,
+            budgetToken,
         });
 
         // Authorize this client to use /api/gradio-proxy for the windows it's about to
